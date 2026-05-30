@@ -7,11 +7,27 @@ from telegram import (
     ReplyKeyboardMarkup,
 )
 
+# Районы Череповца (+ пригород отдельно)
+DISTRICTS = [
+    "Индустриальный",
+    "Северный",
+    "Заягорбский",
+    "Зашекснинский",
+    "Пригород",
+]
+
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     """Главное меню с кнопкой вызова мастера."""
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("🚰 Вызвать мастера", callback_data="call_master")]]
+    )
+
+
+def district_keyboard() -> InlineKeyboardMarkup:
+    """Выбор района города."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(name, callback_data=f"district:{name}")] for name in DISTRICTS]
     )
 
 
