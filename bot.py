@@ -1,16 +1,24 @@
 """Точка входа: запуск Telegram-бота «Сантехник Рядом».
 
-Локально работает через polling.
+Локально и на сервере работает через polling.
 На Render (есть RENDER_EXTERNAL_URL) автоматически переключается на webhook.
 """
 
+import asyncio
 import logging
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler
 
 import config
-from handlers import build_conversation_handler, error_handler, start
+import database
+from handlers import (
+    build_conversation_handler,
+    error_handler,
+    help_command,
+    start,
+    stats_command,
+)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -21,12 +29,24 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+def ensure_event_loop() -> None:
+    """На Python 3.14 asyncio.get_event_loop() не создаёт цикл сам — создаём вручную."""
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+
 def main() -> None:
     config.validate()
+    ensure_event_loop()
+    database.init_db()
 
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(build_conversation_handler())
     app.add_error_handler(error_handler)
 
@@ -41,7 +61,7 @@ def main() -> None:
             allowed_updates=Update.ALL_TYPES,
         )
     else:
-        # Режим polling — для локальной разработки.
+        # Режим polling — для локальной разработки и обычного сервера.
         logger.info("Запуск в режиме polling")
         app.run_polling(allowed_updates=Update.ALL_TYPES)
 
