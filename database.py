@@ -156,7 +156,7 @@ def get_user_requests(user_id: int, limit: int = 10) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, created_at, problem, district, address, urgency, status
+            SELECT id, created_at, problem, district, address, urgency, phone, status
             FROM requests
             WHERE user_id = ? AND status != 'canceled'
             ORDER BY id DESC
@@ -180,3 +180,40 @@ def cancel_request(request_id: int, user_id: int) -> bool:
             (request_id, user_id),
         )
         return cursor.rowcount > 0
+
+
+# Поля, которые клиент может менять в зависимости от статуса заявки
+EDITABLE_WHEN_NEW = ("problem", "district", "address", "urgency", "phone")
+EDITABLE_WHEN_TAKEN = ("address", "phone")
+
+
+def update_request(request_id: int, user_id: int, fields: dict) -> str | None:
+    """Редактирование заявки клиентом с учётом статуса.
+    Возвращает новый статус заявки ('new'/'taken') при успехе, иначе None.
+    Пока 'new' — можно менять всё разрешённое; когда 'taken' — только адрес/телефон."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM requests WHERE id = ? AND user_id = ?",
+            (request_id, user_id),
+        ).fetchone()
+        if not row:
+            return None
+        status = row["status"]
+        if status == "new":
+            allowed = EDITABLE_WHEN_NEW
+        elif status == "taken":
+            allowed = EDITABLE_WHEN_TAKEN
+        else:
+            return None  # canceled — редактировать нельзя
+
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None and str(v).strip()}
+        if not updates:
+            return status  # нечего менять — не ошибка
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [request_id, user_id]
+        conn.execute(
+            f"UPDATE requests SET {set_clause} WHERE id = ? AND user_id = ?",
+            values,
+        )
+        return status
