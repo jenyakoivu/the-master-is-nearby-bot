@@ -1,11 +1,16 @@
-"""Логика диалога: приём заявки, сохранение в базу и отправка администратору."""
+"""Логика диалога: приём заявки, рассылка мастерам, статусы и кнопки взять/передать."""
 
 import html
 import logging
 import re
 from datetime import datetime
 
-from telegram import ReplyKeyboardRemove, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -26,18 +31,93 @@ from keyboards import (
 
 logger = logging.getLogger(__name__)
 
-# Состояния диалога
 PROBLEM, DISTRICT, ADDRESS, URGENCY, PHONE = range(5)
 
 
 def is_valid_phone(text: str) -> bool:
-    """Простая проверка телефона: 10–15 цифр (с учётом +, пробелов, скобок, дефисов)."""
     digits = re.sub(r"\D", "", text)
     return 10 <= len(digits) <= 15
 
 
+def master_display_name(user) -> str:
+    return f"@{user.username}" if user.username else (user.full_name or f"id {user.id}")
+
+
+# ---------- Карточки заявки для мастеров ----------
+# Три варианта:
+#   free          — заявка свободна: телефон скрыт, кнопка «Взять» (видят все)
+#   taken_owner   — её взял этот мастер: телефон виден, кнопка «Передать»
+#   taken_other   — её взял кто-то другой: телефон скрыт, без кнопок
+
+def _base_lines(req: dict) -> str:
+    return (
+        f"🛠 Проблема: {html.escape(req['problem'])}\n"
+        f"📍 Район: {html.escape(req['district'])}\n"
+        f"🏠 Адрес: {html.escape(req['address'] or '—')}\n"
+        f"⏱ Срочность: {html.escape(req['urgency'])}"
+    )
+
+
+def card_free(req: dict):
+    text = (
+        f"🆕 <b>Заявка №{req['id']}</b> · 🟢 СВОБОДНА\n\n"
+        f"{_base_lines(req)}\n"
+        f"📱 Телефон откроется после принятия"
+    )
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✋ Взять заявку", callback_data=f"take:{req['id']}")]]
+    )
+    return text, kb
+
+
+def card_taken_owner(req: dict):
+    text = (
+        f"✅ <b>Заявка №{req['id']}</b> · 🔴 ЗАНЯТА (ваша)\n\n"
+        f"{_base_lines(req)}\n"
+        f"📱 Телефон: {html.escape(req['phone'])}\n"
+        f"👤 Клиент: {html.escape(req['full_name'] or '—')}"
+    )
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔄 Передать заявку", callback_data=f"release:{req['id']}")]]
+    )
+    return text, kb
+
+
+def card_taken_other(req: dict):
+    text = (
+        f"🔴 <b>Заявка №{req['id']}</b> · ЗАНЯТА — {html.escape(req['taken_by'] or '')}\n\n"
+        f"{_base_lines(req)}\n"
+        f"📱 Заявку взял другой мастер"
+    )
+    return text, None  # без кнопок
+
+
+async def _broadcast_update(context: ContextTypes.DEFAULT_TYPE, req: dict) -> None:
+    """Обновляет все копии заявки у мастеров согласно текущему статусу."""
+    rid = req["id"]
+    for master_id, message_id in database.get_master_messages(rid):
+        if req["status"] == "new":
+            text, kb = card_free(req)
+        elif master_id == req["taken_by_id"]:
+            text, kb = card_taken_owner(req)
+        else:
+            text, kb = card_taken_other(req)
+        try:
+            await context.bot.edit_message_text(
+                chat_id=master_id,
+                message_id=message_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception:
+            # Сообщение не изменилось/удалено/мастер заблокировал бота — пропускаем.
+            logger.debug("Не удалось обновить сообщение мастера %s", master_id)
+
+
+# ---------- Диалог с клиентом ----------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Команда /start — приветствие и кнопка вызова мастера."""
     context.user_data.clear()
     user = update.effective_user
     text = (
@@ -52,28 +132,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /help — краткая справка."""
     await update.message.reply_html(
         "ℹ️ <b>Сантехник Рядом</b>\n\n"
-        "/start — оставить заявку на вызов мастера\n"
-        "/cancel — отменить заполнение заявки\n\n"
-        "Опишите проблему, выберите район, укажите адрес, срочность и телефон — "
-        "и мы свяжемся с вами."
+        "/start — оставить заявку\n"
+        "/cancel — отменить заполнение\n\n"
+        "Опишите проблему, выберите район, укажите адрес, срочность и телефон."
     )
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /stats — статистика заявок. Доступна только администратору."""
     if str(update.effective_user.id) != str(config.ADMIN_CHAT_ID):
-        return  # для остальных команда «не существует»
+        return
     total, recent = database.get_stats()
     if total == 0:
         await update.message.reply_text("📊 Заявок пока нет.")
         return
     lines = [f"📊 <b>Всего заявок: {total}</b>", "", "Последние:"]
-    for rid, created, problem, district, address, urgency, phone in recent:
+    for rid, created, problem, district, address, urgency, phone, status, taken_by in recent:
+        mark = "🔴" if status == "taken" else "🟢"
+        who = f" — {html.escape(taken_by)}" if taken_by else ""
         lines.append(
-            f"\n#{rid} · {created}\n"
+            f"\n#{rid} {mark}{who} · {created}\n"
             f"🛠 {html.escape(problem)}\n"
             f"📍 {html.escape(district)}, {html.escape(address or '—')}\n"
             f"⏱ {html.escape(urgency)} · 📱 {html.escape(phone)}"
@@ -82,24 +161,24 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def call_master(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Нажата кнопка «Вызвать мастера» — начинаем сбор данных."""
     query = update.callback_query
     await query.answer()
     context.user_data.clear()
     await query.message.reply_text(
         "🛠 Опишите, что случилось.\n\n"
-        "Например: «Течёт труба под раковиной» или «Засорился унитаз».\n\n"
-        "Отменить в любой момент — команда /cancel"
+        "Например: «Течёт труба под раковиной».\n\n"
+        "Отменить — команда /cancel"
     )
     return PROBLEM
 
 
 async def get_problem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["problem"] = update.message.text.strip()
-    await update.message.reply_text(
-        "📍 Выберите район города:",
-        reply_markup=district_keyboard(),
-    )
+    text = update.message.text.strip()
+    if len(text) < 3:
+        await update.message.reply_text("Опишите проблему чуть подробнее 🙂")
+        return PROBLEM
+    context.user_data["problem"] = text
+    await update.message.reply_text("📍 Выберите район города:", reply_markup=district_keyboard())
     return DISTRICT
 
 
@@ -117,11 +196,12 @@ async def get_district(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def get_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["address"] = update.message.text.strip()
-    await update.message.reply_text(
-        "⏱ Насколько срочно нужен мастер?",
-        reply_markup=urgency_keyboard(),
-    )
+    text = update.message.text.strip()
+    if len(text) < 3:
+        await update.message.reply_text("Укажите адрес чуть подробнее 🙂")
+        return ADDRESS
+    context.user_data["address"] = text
+    await update.message.reply_text("⏱ Насколько срочно нужен мастер?", reply_markup=urgency_keyboard())
     return URGENCY
 
 
@@ -133,40 +213,37 @@ async def get_urgency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     await query.edit_message_text(f"⏱ Срочность: {value}")
     await query.message.reply_text(
         "📱 Оставьте номер телефона для связи.\n\n"
-        "Можно нажать кнопку ниже или ввести номер вручную.",
+        "Нажмите кнопку ниже или введите вручную.",
         reply_markup=phone_keyboard(),
     )
     return PHONE
 
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Финальный шаг: проверяем телефон, сохраняем заявку, уведомляем клиента и админа."""
     if update.message.contact:
         phone = update.message.contact.phone_number
     else:
         phone = update.message.text.strip()
         if not is_valid_phone(phone):
             await update.message.reply_text(
-                "🤔 Не похоже на номер телефона. "
-                "Введите его в формате +7 999 123-45-67 или нажмите кнопку ниже.",
+                "🤔 Не похоже на номер. Введите в формате +7 999 123-45-67 "
+                "или нажмите кнопку ниже.",
                 reply_markup=phone_keyboard(),
             )
-            return PHONE  # остаёмся на этом же шаге
+            return PHONE
 
     context.user_data["phone"] = phone
     data = context.user_data
     user = update.effective_user
 
-    # Сохраняем заявку в базу
     try:
         request_id = database.save_request(data, user)
     except Exception:
-        logger.exception("Не удалось сохранить заявку в базу")
+        logger.exception("Не удалось сохранить заявку")
         request_id = None
 
     number = f"№{request_id}" if request_id else ""
 
-    # Подтверждение клиенту
     confirmation = (
         f"✅ <b>Заявка {number} принята!</b>\n\n"
         f"🛠 Проблема: {html.escape(data['problem'])}\n"
@@ -179,7 +256,6 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     await update.message.reply_html(confirmation, reply_markup=ReplyKeyboardRemove())
 
-    # Уведомление администратору
     username = f"@{user.username}" if user.username else "—"
     admin_text = (
         f"🆕 <b>Новая заявка {number}</b>\n\n"
@@ -192,42 +268,81 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"🕒 {datetime.now():%d.%m.%Y %H:%M}"
     )
     try:
-        await context.bot.send_message(
-            chat_id=config.ADMIN_CHAT_ID,
-            text=admin_text,
-            parse_mode="HTML",
-        )
+        await context.bot.send_message(chat_id=config.ADMIN_CHAT_ID, text=admin_text, parse_mode="HTML")
     except Exception:
         logger.exception("Не удалось отправить заявку администратору")
+
+    # Рассылка мастерам (телефон скрыт) + запоминаем id каждого сообщения
+    if request_id:
+        req = database.get_request(request_id)
+        text, kb = card_free(req)
+        for master_id in config.MASTER_IDS:
+            try:
+                msg = await context.bot.send_message(
+                    chat_id=master_id, text=text, parse_mode="HTML", reply_markup=kb
+                )
+                database.save_master_message(request_id, int(master_id), msg.message_id)
+            except Exception:
+                logger.warning("Не удалось отправить заявку мастеру %s", master_id)
 
     context.user_data.clear()
     return ConversationHandler.END
 
 
+# ---------- Кнопки мастеров ----------
+
+async def take_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    rid = int(query.data.split(":", 1)[1])
+    master = query.from_user
+    ok = database.take_request(rid, master.id, master_display_name(master))
+    if not ok:
+        await query.answer("Заявку уже взял другой мастер.", show_alert=True)
+        req = database.get_request(rid)
+        if req:
+            await _broadcast_update(context, req)
+        return
+    await query.answer("Заявка ваша! Телефон клиента открыт.")
+    req = database.get_request(rid)
+    await _broadcast_update(context, req)
+
+
+async def release_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    rid = int(query.data.split(":", 1)[1])
+    master = query.from_user
+    ok = database.release_request(rid, master.id)
+    if not ok:
+        await query.answer("Передать может только тот, кто взял заявку.", show_alert=True)
+        return
+    await query.answer("Заявка передана. Снова доступна другим мастерам.")
+    req = database.get_request(rid)
+    await _broadcast_update(context, req)
+
+
+# ---------- Прочее ----------
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Команда /cancel — отмена текущей заявки."""
     context.user_data.clear()
     await update.message.reply_text(
-        "Заявка отменена. Чтобы начать заново, отправьте /start.",
+        "Заявка отменена. Чтобы начать заново — /start.",
         reply_markup=ReplyKeyboardRemove(),
     )
     return ConversationHandler.END
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Глобальный обработчик ошибок: логируем и мягко уведомляем пользователя."""
-    logger.error("Ошибка при обработке обновления:", exc_info=context.error)
+    logger.error("Ошибка:", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
         try:
             await update.effective_message.reply_text(
-                "⚠️ Что-то пошло не так. Попробуйте ещё раз или начните заново: /start"
+                "⚠️ Что-то пошло не так. Начните заново: /start"
             )
         except Exception:
-            logger.exception("Не удалось отправить сообщение об ошибке пользователю")
+            logger.exception("Не удалось отправить сообщение об ошибке")
 
 
 def build_conversation_handler() -> ConversationHandler:
-    """Собираем ConversationHandler для приёма заявки."""
     return ConversationHandler(
         entry_points=[CallbackQueryHandler(call_master, pattern="^call_master$")],
         states={
