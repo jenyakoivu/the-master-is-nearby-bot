@@ -217,3 +217,67 @@ def update_request(request_id: int, user_id: int, fields: dict) -> str | None:
             values,
         )
         return status
+
+
+def complete_request(request_id: int, master_id: int) -> bool:
+    """Мастер отмечает свою заявку выполненной. Только взявший может завершить."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE requests
+            SET status = 'done'
+            WHERE id = ? AND status = 'taken' AND taken_by_id = ?
+            """,
+            (request_id, master_id),
+        )
+        return cursor.rowcount > 0
+
+
+def get_open_requests(limit: int = 50) -> list[dict]:
+    """Доска заявок: только свободные (open/new). Телефон не отдаём наружу здесь."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, created_at, problem, district, address, urgency, status
+            FROM requests
+            WHERE status = 'new'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_master_active(master_id: int) -> list[dict]:
+    """Заявки мастера в работе (taken им)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, created_at, problem, district, address, urgency, phone,
+                   username, full_name, status
+            FROM requests
+            WHERE status = 'taken' AND taken_by_id = ?
+            ORDER BY id DESC
+            """,
+            (master_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_master_history(master_id: int, limit: int = 50) -> list[dict]:
+    """История мастера: выполненные им (done) и отменённые клиентом заявки,
+    которые были взяты ИМ. Переданные сюда не попадают (taken_by_id обнуляется при передаче)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, created_at, problem, district, address, urgency, phone,
+                   username, full_name, status
+            FROM requests
+            WHERE taken_by_id = ? AND status IN ('done', 'canceled')
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (master_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
