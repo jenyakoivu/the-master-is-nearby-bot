@@ -12,6 +12,8 @@ from handlers import (
     build_conversation_handler,
     error_handler,
     help_command,
+    cancel_request_cb,
+    my_requests_cb,
     release_request_cb,
     start,
     stats_command,
@@ -45,6 +47,8 @@ def main() -> None:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(build_conversation_handler())
+    app.add_handler(CallbackQueryHandler(my_requests_cb, pattern="^my_requests$"))
+    app.add_handler(CallbackQueryHandler(cancel_request_cb, pattern="^cancel_req:"))
     # Кнопки мастеров (вне диалога с клиентом)
     app.add_handler(CallbackQueryHandler(take_request_cb, pattern="^take:"))
     app.add_handler(CallbackQueryHandler(release_request_cb, pattern="^release:"))
