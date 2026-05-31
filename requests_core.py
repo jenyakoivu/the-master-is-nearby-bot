@@ -120,3 +120,30 @@ async def broadcast_update(master_bot, req: dict) -> None:
             )
         except Exception:
             logger.debug("Не удалось обновить сообщение мастера %s", master_id)
+
+
+async def notify_client(client_bot, req: dict, event: str) -> None:
+    """Уведомляет клиента об изменении статуса его заявки.
+    event: 'taken' — мастер взял; 'released' — мастер отказался, снова ищем."""
+    client_id = req.get("user_id")
+    if not client_id:
+        return
+    rid = req["id"]
+    if event == "taken":
+        text = (
+            f"✅ <b>Мастер найден!</b>\n\n"
+            f"По заявке №{rid} («{html.escape(req['problem'])}») назначен мастер. "
+            f"Он свяжется с вами в ближайшее время.\n\n"
+            f"Спасибо, что выбрали «Сантехник Рядом»! 💖"
+        )
+    elif event == "released":
+        text = (
+            f"🔄 По заявке №{rid} («{html.escape(req['problem'])}») снова ищем мастера.\n"
+            f"Как только кто-то возьмёт заявку, мы сообщим."
+        )
+    else:
+        return
+    try:
+        await client_bot.send_message(chat_id=client_id, text=text, parse_mode="HTML")
+    except Exception:
+        logger.warning("Не удалось уведомить клиента %s", client_id)
