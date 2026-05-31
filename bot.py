@@ -13,6 +13,7 @@ import client_bot
 import config
 import database
 import master_bot
+from api import start_api
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -46,6 +47,9 @@ async def run() -> None:
     await client_app.updater.start_polling(drop_pending_updates=True)
     await master_app.updater.start_polling(drop_pending_updates=True)
 
+    # API для мини-аппа (на localhost, наружу его пускает Caddy по https)
+    api_runner = await start_api()
+
     logger.info("Оба бота запущены: клиентский и мастерский")
 
     # Держим процесс живым, пока не остановят.
@@ -53,6 +57,7 @@ async def run() -> None:
     try:
         await stop_event.wait()
     finally:
+        await api_runner.cleanup()
         await client_app.updater.stop()
         await master_app.updater.stop()
         await client_app.stop()
