@@ -60,9 +60,9 @@ def _base_lines(req: dict) -> str:
 
 def card_free(req: dict):
     text = (
-        f"🆕 <b>Заявка №{req['id']}</b> · 🟢 СВОБОДНА\n\n"
+        f"🆕 <b>Заявка №{req['id']}</b> · 🟢 ОТКРЫТА\n\n"
         f"{_base_lines(req)}\n"
-        f"📱 Телефон откроется после принятия"
+        f"📱 ✱✱✱✱✱✱✱✱✱✱"
     )
     kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("✋ Взять заявку", callback_data=f"take:{req['id']}")]]
@@ -92,11 +92,21 @@ def card_taken_other(req: dict):
     return text, None  # без кнопок
 
 
+def card_canceled(req: dict):
+    text = (
+        f"❌ <b>Заявка №{req['id']}</b> · ОТМЕНЕНА клиентом\n\n"
+        f"{_base_lines(req)}"
+    )
+    return text, None  # без кнопок
+
+
 async def _broadcast_update(context: ContextTypes.DEFAULT_TYPE, req: dict) -> None:
     """Обновляет все копии заявки у мастеров согласно текущему статусу."""
     rid = req["id"]
     for master_id, message_id in database.get_master_messages(rid):
-        if req["status"] == "new":
+        if req["status"] == "canceled":
+            text, kb = card_canceled(req)
+        elif req["status"] == "new":
             text, kb = card_free(req)
         elif master_id == req["taken_by_id"]:
             text, kb = card_taken_owner(req)
@@ -170,6 +180,56 @@ async def call_master(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "Отменить — команда /cancel"
     )
     return PROBLEM
+
+
+async def my_requests_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Клиент смотрит свои заявки и их статус, может удалить каждую."""
+    query = update.callback_query
+    await query.answer()
+    rows = database.get_user_requests(query.from_user.id)
+    if not rows:
+        await query.message.reply_text(
+            "У вас пока нет заявок. Нажмите /start, чтобы оставить первую 🚿"
+        )
+        return
+    await query.message.reply_text("📋 Ваши заявки:")
+    for r in rows:
+        if r["status"] == "taken":
+            status = "🔧 В работе — мастер скоро свяжется"
+        else:
+            status = "🟢 Открыта — ищем мастера"
+        text = (
+            f"<b>Заявка №{r['id']}</b> · {r['created_at'][:10]}\n"
+            f"🛠 {html.escape(r['problem'])}\n"
+            f"📍 {html.escape(r['district'])}, {html.escape(r['address'] or '—')}\n"
+            f"{status}"
+        )
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🗑 Удалить заявку", callback_data=f"cancel_req:{r['id']}")]]
+        )
+        await query.message.reply_html(text, reply_markup=kb)
+
+
+async def cancel_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Клиент удаляет (отменяет) свою заявку. Мастерам копии гасятся."""
+    query = update.callback_query
+    rid = int(query.data.split(":", 1)[1])
+    ok = database.cancel_request(rid, query.from_user.id)
+    if not ok:
+        await query.answer("Эту заявку нельзя отменить.", show_alert=True)
+        return
+    await query.answer("Заявка удалена.")
+    # Убираем кнопку и помечаем удаление в сообщении клиента
+    try:
+        await query.edit_message_text(
+            f"❌ Заявка №{rid} удалена.", reply_markup=None
+        )
+    except Exception:
+        pass
+    # Гасим копии у мастеров
+    req = database.get_request(rid)
+    if req:
+        await _broadcast_update(context, req)
 
 
 async def get_problem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
