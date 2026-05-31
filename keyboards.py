@@ -5,7 +5,11 @@ from telegram import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
+
+# Адрес мини-аппа «Мои заявки»
+MINIAPP_URL = "https://jenyakoivu.github.io/tehnik-app/"
 
 # Районы Череповца (+ пригород отдельно)
 DISTRICTS = [
@@ -18,11 +22,11 @@ DISTRICTS = [
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню с кнопками вызова мастера и просмотра заявок."""
+    """Главное меню с кнопками вызова мастера и просмотра заявок (мини-апп)."""
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("👷 Вызвать мастера", callback_data="call_master")],
-            [InlineKeyboardButton("📋 Мои заявки", callback_data="my_requests")],
+            [InlineKeyboardButton("📋 Мои заявки", web_app=WebAppInfo(url=MINIAPP_URL))],
         ]
     )
 
