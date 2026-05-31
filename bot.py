@@ -48,6 +48,8 @@ async def run() -> None:
     await master_app.updater.start_polling(drop_pending_updates=True)
 
     # API для мини-аппа (на localhost, наружу его пускает Caddy по https)
+    from api import set_bots
+    set_bots(master_app.bot, client_app.bot)
     api_runner = await start_api()
 
     logger.info("Оба бота запущены: клиентский и мастерский")
