@@ -141,6 +141,12 @@ async def notify_client(client_bot, req: dict, event: str) -> None:
             f"🔄 По заявке №{rid} («{html.escape(req['problem'])}») снова ищем мастера.\n"
             f"Как только кто-то возьмёт заявку, мы сообщим."
         )
+    elif event == "done":
+        text = (
+            f"✅ <b>Заявка №{rid} выполнена!</b>\n\n"
+            f"Работа по заявке («{html.escape(req['problem'])}») завершена.\n"
+            f"Спасибо, что выбрали «Техник Рядом»! 💖"
+        )
     else:
         return
     try:
