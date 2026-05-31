@@ -4,16 +4,17 @@ import os
 
 from dotenv import load_dotenv
 
-# Локально читаем .env. На Render переменные приходят из окружения — load_dotenv
-# просто ничего не найдёт и не помешает.
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
+# Список id мастеров через запятую, например: MASTER_IDS=747862074,123456789
+# Каждый мастер должен один раз нажать /start у бота, иначе бот не сможет ему писать.
+_raw_masters = os.getenv("MASTER_IDS", "")
+MASTER_IDS = [m.strip() for m in _raw_masters.split(",") if m.strip()]
+
 # Render автоматически задаёт PORT и RENDER_EXTERNAL_URL для web-сервисов.
-# Если RENDER_EXTERNAL_URL есть — запускаемся в режиме webhook (для деплоя),
-# иначе используем polling (удобно локально).
 PORT = int(os.getenv("PORT", "10000"))
 WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL")
 
