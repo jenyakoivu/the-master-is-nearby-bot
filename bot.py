@@ -1,24 +1,18 @@
-"""Точка входа: запуск Telegram-бота «Сантехник Рядом»."""
+"""Точка входа: запускает клиентский и мастерский боты в одном процессе.
+
+Оба бота крутятся в одном event loop. Клиентский бот при новой заявке
+мгновенно рассылает её мастерам через объект мастерского бота.
+"""
 
 import asyncio
 import logging
 
-from telegram import Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram.ext import Application
 
+import client_bot
 import config
 import database
-from handlers import (
-    build_conversation_handler,
-    error_handler,
-    help_command,
-    cancel_request_cb,
-    my_requests_cb,
-    release_request_cb,
-    start,
-    stats_command,
-    take_request_cb,
-)
+import master_bot
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -28,44 +22,48 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-def ensure_event_loop() -> None:
-    """На Python 3.14 asyncio.get_event_loop() не создаёт цикл сам — создаём вручную."""
+async def run() -> None:
+    config.validate()
+    database.init_db()
+
+    client_app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    master_app = Application.builder().token(config.MASTER_BOT_TOKEN).build()
+
+    # Клиентский бот должен уметь писать через мастерского — передаём ссылку.
+    client_app.bot_data["master_bot"] = master_app.bot
+
+    client_bot.register(client_app)
+    master_bot.register(master_app)
+
+    # Ручной жизненный цикл: run_polling() блокировал бы цикл и не дал бы
+    # запустить второй бот. Поэтому запускаем оба вручную в общем loop.
+    await client_app.initialize()
+    await master_app.initialize()
+    await client_app.start()
+    await master_app.start()
+    await client_app.updater.start_polling(drop_pending_updates=True)
+    await master_app.updater.start_polling(drop_pending_updates=True)
+
+    logger.info("Оба бота запущены: клиентский и мастерский")
+
+    # Держим процесс живым, пока не остановят.
+    stop_event = asyncio.Event()
     try:
-        asyncio.get_event_loop()
-    except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
+        await stop_event.wait()
+    finally:
+        await client_app.updater.stop()
+        await master_app.updater.stop()
+        await client_app.stop()
+        await master_app.stop()
+        await client_app.shutdown()
+        await master_app.shutdown()
 
 
 def main() -> None:
-    config.validate()
-    ensure_event_loop()
-    database.init_db()
-
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(build_conversation_handler())
-    app.add_handler(CallbackQueryHandler(my_requests_cb, pattern="^my_requests$"))
-    app.add_handler(CallbackQueryHandler(cancel_request_cb, pattern="^cancel_req:"))
-    # Кнопки мастеров (вне диалога с клиентом)
-    app.add_handler(CallbackQueryHandler(take_request_cb, pattern="^take:"))
-    app.add_handler(CallbackQueryHandler(release_request_cb, pattern="^release:"))
-    app.add_error_handler(error_handler)
-
-    if config.WEBHOOK_URL:
-        logger.info("Запуск в режиме webhook на %s", config.WEBHOOK_URL)
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=config.PORT,
-            url_path=config.TELEGRAM_BOT_TOKEN,
-            webhook_url=f"{config.WEBHOOK_URL}/{config.TELEGRAM_BOT_TOKEN}",
-            allowed_updates=Update.ALL_TYPES,
-        )
-    else:
-        logger.info("Запуск в режиме polling")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        asyncio.run(run())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Остановка ботов")
 
 
 if __name__ == "__main__":
