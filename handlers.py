@@ -68,6 +68,14 @@ def mask_phone(phone: str) -> str:
     return prefix + visible + hidden
 
 
+def client_contact(req: dict) -> str:
+    """Имя клиента + кликабельный @username (если есть) для связи в Telegram."""
+    name = html.escape(req["full_name"] or "—")
+    if req.get("username"):
+        return f"{name} (@{req['username']})"
+    return name
+
+
 def card_free(req: dict):
     text = (
         f"🆕 <b>Заявка №{req['id']}</b> · 🟢 ОТКРЫТА\n\n"
@@ -85,7 +93,7 @@ def card_taken_owner(req: dict):
         f"🆕 <b>Заявка №{req['id']}</b> · ✅ ПРИНЯТА (ваша)\n\n"
         f"{_base_lines(req)}\n"
         f"📱 Телефон: {html.escape(req['phone'])}\n"
-        f"👤 Клиент: {html.escape(req['full_name'] or '—')}"
+        f"👤 Клиент: {client_contact(req)}"
     )
     kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("🔄 Передать заявку", callback_data=f"release:{req['id']}")]]
@@ -322,7 +330,7 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"⏱ Срочность: {html.escape(data['urgency'])}\n"
         f"📱 Телефон: {html.escape(data['phone'])}\n\n"
         "Мастер свяжется с вами в ближайшее время.\n"
-        "Спасибо, что выбрали «Сантехник Рядом»! 💕💕"
+        "Спасибо, что выбрали «Сантехник Рядом»! 💖"
     )
     await update.message.reply_html(confirmation, reply_markup=ReplyKeyboardRemove())
 
