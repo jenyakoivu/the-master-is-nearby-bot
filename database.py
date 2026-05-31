@@ -149,3 +149,34 @@ def get_stats() -> tuple[int, list[tuple]]:
             """
         ).fetchall()
         return total, [tuple(r) for r in recent]
+
+
+def get_user_requests(user_id: int, limit: int = 10) -> list[dict]:
+    """Заявки конкретного клиента (для раздела «Мои заявки»)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, created_at, problem, district, address, urgency, status
+            FROM requests
+            WHERE user_id = ? AND status != 'canceled'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def cancel_request(request_id: int, user_id: int) -> bool:
+    """Клиент отменяет свою заявку (помечает 'canceled', из базы не удаляет).
+    Отменить может только владелец заявки. Возвращает True, если получилось."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE requests
+            SET status = 'canceled'
+            WHERE id = ? AND user_id = ? AND status != 'canceled'
+            """,
+            (request_id, user_id),
+        )
+        return cursor.rowcount > 0
