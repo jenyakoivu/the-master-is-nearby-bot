@@ -82,7 +82,7 @@ def card_free(req: dict):
 
 def card_taken_owner(req: dict):
     text = (
-        f"✅ <b>Заявка №{req['id']}</b> · 🟢 ПРИНЯТА (ваша)\n\n"
+        f"✅ <b>Заявка №{req['id']}</b> · ПРИНЯТА (ваша)\n\n"
         f"{_base_lines(req)}\n"
         f"📱 Телефон: {html.escape(req['phone'])}\n"
         f"👤 Клиент: {html.escape(req['full_name'] or '—')}"
