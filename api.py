@@ -142,7 +142,10 @@ def make_app() -> web.Application:
     app.router.add_get("/api/my_requests", my_requests)
     app.router.add_post("/api/edit", edit_request)
     app.router.add_post("/api/delete", delete_request)
-    for path in ("/api/my_requests", "/api/edit", "/api/delete"):
+    app.router.add_get("/api/m/board", m_board)
+    app.router.add_get("/api/m/mine", m_mine)
+    app.router.add_post("/api/m/action", m_action)
+    for path in ("/api/my_requests", "/api/edit", "/api/delete", "/api/m/board", "/api/m/mine", "/api/m/action"):
         app.router.add_options(path, handle_options)
     return app
 
@@ -154,3 +157,120 @@ async def start_api(host: str = "127.0.0.1", port: int = 8081) -> web.AppRunner:
     await site.start()
     logger.info("API мини-аппа запущен на %s:%s", host, port)
     return runner
+
+
+# ----------------- API для мастерского мини-аппа -----------------
+# Подпись мастерского мини-аппа проверяется токеном МАСТЕРСКОГО бота.
+
+def _check_master_init(init_data: str) -> dict | None:
+    try:
+        parsed = dict(parse_qsl(init_data, strict_parsing=True))
+    except Exception:
+        return None
+    received_hash = parsed.pop("hash", None)
+    if not received_hash:
+        return None
+    data_check = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+    secret = hmac.new(b"WebAppData", config.MASTER_BOT_TOKEN.encode(), hashlib.sha256).digest()
+    calc_hash = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(calc_hash, received_hash):
+        return None
+    try:
+        return json.loads(parsed.get("user", "{}"))
+    except Exception:
+        return None
+
+
+def _master_auth(init_data: str) -> dict | None:
+    """Проверяет подпись и что пользователь — мастер из списка."""
+    user = _check_master_init(init_data)
+    if not user or "id" not in user:
+        return None
+    if str(user["id"]) not in [str(m) for m in config.MASTER_IDS]:
+        return None
+    return user
+
+
+def _master_card_dict(r: dict, show_contact: bool) -> dict:
+    """Заявка для мастера. Контакты только если show_contact=True (его заявка)."""
+    d = {
+        "id": r["id"],
+        "problem": r["problem"],
+        "district": r["district"],
+        "address": r["address"] or "",
+        "urgency": r["urgency"],
+        "status": r["status"],
+        "date": (r["created_at"] or "")[:10],
+    }
+    if show_contact:
+        d["phone"] = r.get("phone", "")
+        d["username"] = r.get("username") or ""
+        d["full_name"] = r.get("full_name") or ""
+    return d
+
+
+async def m_board(request: web.Request) -> web.Response:
+    """Доска: открытые заявки (без контактов)."""
+    if not _master_auth(request.query.get("initData", "")):
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    rows = database.get_open_requests()
+    return _cors(web.json_response({"requests": [_master_card_dict(r, False) for r in rows]}))
+
+
+async def m_mine(request: web.Request) -> web.Response:
+    """Мои заявки: в работе (с контактами) + история."""
+    user = _master_auth(request.query.get("initData", ""))
+    if not user:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    active = database.get_master_active(user["id"])
+    history = database.get_master_history(user["id"])
+    return _cors(web.json_response({
+        "active": [_master_card_dict(r, True) for r in active],
+        "history": [_master_card_dict(r, True) for r in history],
+    }))
+
+
+async def m_action(request: web.Request) -> web.Response:
+    """POST { initData, id, action: take|release|complete }."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    user = _master_auth(body.get("initData", ""))
+    if not user:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    rid = body.get("id")
+    action = body.get("action")
+    if not isinstance(rid, int) or action not in ("take", "release", "complete"):
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+
+    mid = user["id"]
+    mname = ("@" + user["username"]) if user.get("username") else (user.get("first_name") or f"id {mid}")
+
+    if action == "take":
+        ok = database.take_request(rid, mid, mname)
+        if ok and _client_bot is not None:
+            req = database.get_request(rid)
+            if req:
+                await requests_core.notify_client(_client_bot, req, "taken")
+    elif action == "release":
+        ok = database.release_request(rid, mid)
+        if ok and _client_bot is not None:
+            req = database.get_request(rid)
+            if req:
+                await requests_core.notify_client(_client_bot, req, "released")
+    else:  # complete
+        ok = database.complete_request(rid, mid)
+        if ok and _client_bot is not None:
+            req = database.get_request(rid)
+            if req:
+                await requests_core.notify_client(_client_bot, req, "done")
+
+    if not ok:
+        return _cors(web.json_response({"error": "not_allowed"}, status=403))
+    # Обновим карточку в чате мастеров (бот) тоже
+    if _master_bot is not None:
+        req = database.get_request(rid)
+        if req:
+            await requests_core.broadcast_update(_master_bot, req)
+    return _cors(web.json_response({"ok": True}))
