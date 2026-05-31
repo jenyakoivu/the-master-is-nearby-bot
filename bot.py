@@ -29,8 +29,10 @@ async def run() -> None:
     client_app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     master_app = Application.builder().token(config.MASTER_BOT_TOKEN).build()
 
-    # Клиентский бот должен уметь писать через мастерского — передаём ссылку.
+    # Клиентский бот пишет мастерам через мастерского, мастерский уведомляет
+    # клиентов через клиентского — передаём ссылки в обе стороны.
     client_app.bot_data["master_bot"] = master_app.bot
+    master_app.bot_data["client_bot"] = client_app.bot
 
     client_bot.register(client_app)
     master_bot.register(master_app)
