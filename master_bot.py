@@ -42,6 +42,10 @@ async def take_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer("Заявка ваша! Телефон клиента открыт.")
     req = database.get_request(rid)
     await requests_core.broadcast_update(context.bot, req)
+    # Уведомляем клиента, что мастер найден
+    client_bot = context.bot_data.get("client_bot")
+    if client_bot and req:
+        await requests_core.notify_client(client_bot, req, "taken")
 
 
 async def release_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -55,6 +59,10 @@ async def release_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer("Заявка передана. Снова доступна другим мастерам.")
     req = database.get_request(rid)
     await requests_core.broadcast_update(context.bot, req)
+    # Уведомляем клиента, что снова ищем мастера
+    client_bot = context.bot_data.get("client_bot")
+    if client_bot and req:
+        await requests_core.notify_client(client_bot, req, "released")
 
 
 def register(app) -> None:
