@@ -1,14 +1,10 @@
-"""Точка входа: запуск Telegram-бота «Сантехник Рядом».
-
-Локально и на сервере работает через polling.
-На Render (есть RENDER_EXTERNAL_URL) автоматически переключается на webhook.
-"""
+"""Точка входа: запуск Telegram-бота «Сантехник Рядом»."""
 
 import asyncio
 import logging
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
 import config
 import database
@@ -16,15 +12,16 @@ from handlers import (
     build_conversation_handler,
     error_handler,
     help_command,
+    release_request_cb,
     start,
     stats_command,
+    take_request_cb,
 )
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-# Не засоряем логи внутренними запросами библиотеки.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -48,10 +45,12 @@ def main() -> None:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(build_conversation_handler())
+    # Кнопки мастеров (вне диалога с клиентом)
+    app.add_handler(CallbackQueryHandler(take_request_cb, pattern="^take:"))
+    app.add_handler(CallbackQueryHandler(release_request_cb, pattern="^release:"))
     app.add_error_handler(error_handler)
 
     if config.WEBHOOK_URL:
-        # Режим webhook — для деплоя на Render (web service).
         logger.info("Запуск в режиме webhook на %s", config.WEBHOOK_URL)
         app.run_webhook(
             listen="0.0.0.0",
@@ -61,7 +60,6 @@ def main() -> None:
             allowed_updates=Update.ALL_TYPES,
         )
     else:
-        # Режим polling — для локальной разработки и обычного сервера.
         logger.info("Запуск в режиме polling")
         app.run_polling(allowed_updates=Update.ALL_TYPES)
 
