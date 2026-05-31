@@ -322,7 +322,7 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"⏱ Срочность: {html.escape(data['urgency'])}\n"
         f"📱 Телефон: {html.escape(data['phone'])}\n\n"
         "Мастер свяжется с вами в ближайшее время.\n"
-        "Спасибо, что выбрали «Сантехник Рядом»! 🚿"
+        "Спасибо, что выбрали «Сантехник Рядом»! 💕💕"
     )
     await update.message.reply_html(confirmation, reply_markup=ReplyKeyboardRemove())
 
