@@ -58,11 +58,21 @@ def _base_lines(req: dict) -> str:
     )
 
 
+def mask_phone(phone: str) -> str:
+    """Показывает первые 4 ЦИФРЫ номера, остальные цифры скрывает звёздочками.
+    Ведущий + сохраняется отдельно (не считается цифрой)."""
+    prefix = "+" if phone.strip().startswith("+") else ""
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    visible = digits[:4]
+    hidden = "✱" * max(len(digits) - 4, 4)
+    return prefix + visible + hidden
+
+
 def card_free(req: dict):
     text = (
         f"🆕 <b>Заявка №{req['id']}</b> · 🟢 ОТКРЫТА\n\n"
         f"{_base_lines(req)}\n"
-        f"📱 ✱✱✱✱✱✱✱✱✱✱"
+        f"📱 {mask_phone(req['phone'])}"
     )
     kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("✋ Взять заявку", callback_data=f"take:{req['id']}")]]
@@ -72,7 +82,7 @@ def card_free(req: dict):
 
 def card_taken_owner(req: dict):
     text = (
-        f"✅ <b>Заявка №{req['id']}</b> · 🔴 ЗАНЯТА (ваша)\n\n"
+        f"✅ <b>Заявка №{req['id']}</b> · 🟢 ПРИНЯТА (ваша)\n\n"
         f"{_base_lines(req)}\n"
         f"📱 Телефон: {html.escape(req['phone'])}\n"
         f"👤 Клиент: {html.escape(req['full_name'] or '—')}"
