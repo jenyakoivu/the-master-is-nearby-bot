@@ -21,7 +21,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     """Главное меню с кнопками вызова мастера и просмотра заявок."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🚰 Вызвать мастера", callback_data="call_master")],
+            [InlineKeyboardButton("👷 Вызвать мастера", callback_data="call_master")],
             [InlineKeyboardButton("📋 Мои заявки", callback_data="my_requests")],
         ]
     )
