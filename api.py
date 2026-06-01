@@ -126,14 +126,20 @@ async def delete_request(request: web.Request) -> web.Response:
     if not isinstance(rid, int):
         return _cors(web.json_response({"error": "bad_request"}, status=400))
 
+    # Запоминаем, кто взял заявку (до отмены), чтобы уведомить лично
+    before = database.get_request(rid)
+    taker_id = before["taken_by_id"] if before and before["status"] == "taken" else None
+
     ok = database.cancel_request(rid, user["id"])
     if not ok:
         return _cors(web.json_response({"error": "not_found"}, status=404))
-    # Гасим карточки у мастеров
     if _master_bot is not None:
         req = database.get_request(rid)
         if req:
-            await requests_core.broadcast_update(_master_bot, req)
+            await requests_core.broadcast_update(_master_bot, req)  # уберёт пинг, если был
+            # Если заявку уже взял мастер — личное уведомление ему
+            if taker_id:
+                await requests_core.notify_master_canceled(_master_bot, taker_id, req)
     return _cors(web.json_response({"ok": True}))
 
 
