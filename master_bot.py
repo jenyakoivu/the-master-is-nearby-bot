@@ -65,7 +65,23 @@ async def release_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await requests_core.notify_client(client_bot, req, "released")
 
 
+async def delhist_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Кнопка «Удалить из истории» под уведомлением об отмене:
+    убирает это сообщение из чата и прячет заявку из истории мини-аппа."""
+    query = update.callback_query
+    rid = int(query.data.split(":", 1)[1])
+    master_id = query.from_user.id
+    database.hide_one_from_history(master_id, rid)
+    database.delete_cancel_notice(rid, master_id)
+    await query.answer("Убрано из истории.")
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+
 def register(app) -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(take_request_cb, pattern="^take:"))
     app.add_handler(CallbackQueryHandler(release_request_cb, pattern="^release:"))
+    app.add_handler(CallbackQueryHandler(delhist_cb, pattern="^delhist:"))
