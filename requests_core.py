@@ -12,6 +12,34 @@ import database
 logger = logging.getLogger(__name__)
 
 
+def normalize_ru_phone(raw: str) -> str | None:
+    """Приводит РФ-номер к виду +7XXXXXXXXXX. Возвращает None, если номер некорректен."""
+    digits = "".join(ch for ch in (raw or "") if ch.isdigit())
+    # 8XXXXXXXXXX -> 7XXXXXXXXXX
+    if len(digits) == 11 and digits[0] == "8":
+        digits = "7" + digits[1:]
+    # 9XXXXXXXXX (10 цифр без кода страны) -> 7 + ...
+    if len(digits) == 10 and digits[0] == "9":
+        digits = "7" + digits
+    if len(digits) == 11 and digits[0] == "7":
+        return "+" + digits
+    return None
+
+
+def format_ru_phone(raw: str) -> str:
+    """Красивый показ: +7 999 123-45-67. Если номер нестандартный — возвращает как есть."""
+    norm = normalize_ru_phone(raw)
+    if not norm:
+        return raw
+    d = norm[2:]  # 10 цифр после +7
+    return f"+7 {d[0:3]} {d[3:6]}-{d[6:8]}-{d[8:10]}"
+
+
+def phone_for_dial(raw: str) -> str:
+    """Чистый номер для ссылки tel: только + и цифры."""
+    return normalize_ru_phone(raw) or ("+" + "".join(ch for ch in (raw or "") if ch.isdigit()))
+
+
 def mask_phone(phone: str) -> str:
     prefix = "+" if phone.strip().startswith("+") else ""
     digits = "".join(ch for ch in phone if ch.isdigit())
@@ -24,7 +52,7 @@ def _ping_text(req: dict) -> str:
     """Короткий пинг: минимум инфы, без контактов и без кнопок."""
     return (
         f"🆕 <b>Новая заявка №{req['id']}</b>\n"
-        f"📍 {html.escape(req['district'])} · ⏱ {html.escape(req['urgency'])}\n"
+        f"📍 — {html.escape(req['district'])} · ⏱ — {html.escape(req['urgency'])}\n"
         f"Откройте «Доску заявок» в кабинете мастера, чтобы принять."
     )
 
@@ -135,17 +163,17 @@ def _client_status_text(req: dict) -> str:
             status_line = "🔍 Ищем мастера"
     elif status == "taken":
         status_line = "✅ Нашли для вас мастера"
-        extra = "\n\nМастер скоро свяжется с вами 📞"
+        extra = "\n\nМастер скоро свяжется с вами ✨"
     elif status == "done":
         status_line = "🏁 Заявка выполнена"
     else:
         status_line = status
     return (
         f"<b>Заявка №{req['id']}</b> · {status_line}\n\n"
-        f"🛠 {html.escape(req['problem'])}\n"
-        f"📍 {html.escape(req['district'])}, {html.escape(req['address'] or '—')}\n"
-        f"⏱ {html.escape(req['urgency'])}\n"
-        f"📞 {html.escape(req['phone'])}"
+        f"🛠 — {html.escape(req['problem'])}\n"
+        f"📍 — {html.escape(req['district'])}, {html.escape(req['address'] or '—')}\n"
+        f"⏱ — {html.escape(req['urgency'])}\n"
+        f"📞 — {html.escape(format_ru_phone(req['phone']))}"
         + extra
     )
 
