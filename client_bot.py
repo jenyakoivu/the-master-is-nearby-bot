@@ -89,6 +89,8 @@ async def my_requests_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def cancel_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     rid = int(query.data.split(":", 1)[1])
+    before = database.get_request(rid)
+    taker_id = before["taken_by_id"] if before and before["status"] == "taken" else None
     ok = database.cancel_request(rid, query.from_user.id)
     if not ok:
         await query.answer("Эту заявку нельзя отменить.", show_alert=True)
@@ -98,11 +100,13 @@ async def cancel_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_text(f"❌ Заявка №{rid} удалена.", reply_markup=None)
     except Exception:
         pass
-    # Гасим копии у мастеров через мастерский бот
+    # Убираем пинг у мастеров; если заявку взяли — уведомляем взявшего лично
     req = database.get_request(rid)
     master_bot = context.bot_data.get("master_bot")
     if req and master_bot:
         await requests_core.broadcast_update(master_bot, req)
+        if taker_id:
+            await requests_core.notify_master_canceled(master_bot, taker_id, req)
 
 
 async def call_master(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
