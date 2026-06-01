@@ -120,3 +120,63 @@ async def notify_master_canceled(master_bot, master_id: int, req: dict) -> None:
         database.save_cancel_notice(req["id"], master_id, msg.message_id)
     except Exception:
         logger.warning("Не удалось уведомить мастера об отмене %s", master_id)
+
+
+# ---------- Сообщение-статус заявки в чате клиента ----------
+# Одна заявка = одно сообщение. При смене статуса старое удаляется, новое присылается.
+
+_CLIENT_STATUS = {
+    "new": "🟢 Ищем мастера",
+    "taken": "✅ Мастер найден",
+    "done": "🏁 Заявка выполнена",
+}
+
+
+def _client_status_text(req: dict) -> str:
+    status_line = _CLIENT_STATUS.get(req["status"], req["status"])
+    return (
+        f"<b>Заявка №{req['id']}</b> · {status_line}\n\n"
+        f"🛠 {html.escape(req['problem'])}\n"
+        f"📍 {html.escape(req['district'])}, {html.escape(req['address'] or '—')}\n"
+        f"⏱ {html.escape(req['urgency'])}\n"
+        f"📱 {html.escape(req['phone'])}"
+    )
+
+
+async def refresh_client_status(client_bot, req: dict) -> None:
+    """Обновляет сообщение-статус заявки у клиента: удаляет старое, шлёт новое.
+    Для 'canceled' — просто удаляет. Для 'done' — добавляет кнопку «Удалить»."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    client_id = req.get("user_id")
+    if not client_id:
+        return
+    rid = req["id"]
+
+    # Удаляем предыдущее сообщение-статус, если было
+    prev = database.get_client_status_message(rid)
+    if prev:
+        chat_id, message_id = prev
+        try:
+            await client_bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception:
+            pass
+        database.delete_client_status_message(rid)
+
+    # Отменённая заявка — сообщение не пересоздаём
+    if req["status"] == "canceled":
+        return
+
+    kb = None
+    if req["status"] == "done":
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🗑 Удалить", callback_data=f"cstatus_del:{rid}")]]
+        )
+    try:
+        msg = await client_bot.send_message(
+            chat_id=client_id, text=_client_status_text(req),
+            parse_mode="HTML", reply_markup=kb,
+        )
+        database.save_client_status_message(rid, client_id, msg.message_id)
+    except Exception:
+        logger.warning("Не удалось отправить статус клиенту %s", client_id)
