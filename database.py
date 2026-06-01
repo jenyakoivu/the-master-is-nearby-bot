@@ -67,6 +67,16 @@ def init_db() -> None:
             )
             """
         )
+        # Сообщение-статус заявки в чате клиента (одно на заявку; при смене статуса пересоздаётся)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS client_status_messages (
+                request_id  INTEGER PRIMARY KEY,
+                chat_id     INTEGER NOT NULL,
+                message_id  INTEGER NOT NULL
+            )
+            """
+        )
         # Миграции для баз, созданных ранними версиями.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(requests)").fetchall()]
         for col, ddl in (
@@ -374,3 +384,25 @@ def hide_one_from_history(master_id: int, request_id: int) -> None:
             "INSERT OR IGNORE INTO hidden_history (master_id, request_id) VALUES (?, ?)",
             (master_id, request_id),
         )
+
+
+def save_client_status_message(request_id: int, chat_id: int, message_id: int) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO client_status_messages (request_id, chat_id, message_id) VALUES (?, ?, ?)",
+            (request_id, chat_id, message_id),
+        )
+
+
+def get_client_status_message(request_id: int):
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT chat_id, message_id FROM client_status_messages WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+        return (row["chat_id"], row["message_id"]) if row else None
+
+
+def delete_client_status_message(request_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM client_status_messages WHERE request_id = ?", (request_id,))
