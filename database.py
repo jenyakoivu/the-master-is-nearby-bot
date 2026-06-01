@@ -46,6 +46,16 @@ def init_db() -> None:
             )
             """
         )
+        # Скрытые из истории мастера заявки (мастер «очистил» свой вид; данные в базе целы)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hidden_history (
+                master_id   INTEGER NOT NULL,
+                request_id  INTEGER NOT NULL,
+                PRIMARY KEY (master_id, request_id)
+            )
+            """
+        )
         # Миграции для баз, созданных ранними версиями.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(requests)").fetchall()]
         for col, ddl in (
@@ -275,9 +285,31 @@ def get_master_history(master_id: int, limit: int = 50) -> list[dict]:
                    username, full_name, status
             FROM requests
             WHERE taken_by_id = ? AND status IN ('done', 'canceled')
+              AND id NOT IN (SELECT request_id FROM hidden_history WHERE master_id = ?)
             ORDER BY id DESC
             LIMIT ?
             """,
-            (master_id, limit),
+            (master_id, master_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def clear_master_history(master_id: int) -> int:
+    """Прячет из истории мастера все его завершённые/отменённые заявки.
+    Данные из базы НЕ удаляются — только перестают показываться этому мастеру.
+    Возвращает число скрытых заявок."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id FROM requests
+            WHERE taken_by_id = ? AND status IN ('done', 'canceled')
+            """,
+            (master_id,),
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        for rid in ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO hidden_history (master_id, request_id) VALUES (?, ?)",
+                (master_id, rid),
+            )
+        return len(ids)
