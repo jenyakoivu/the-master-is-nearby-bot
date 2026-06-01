@@ -77,6 +77,11 @@ def init_db() -> None:
             )
             """
         )
+        # Отметка, что заявку хотя бы раз передавали (для статуса «снова ищем»)
+        try:
+            conn.execute("ALTER TABLE requests ADD COLUMN released_once INTEGER DEFAULT 0")
+        except Exception:
+            pass
         # Миграции для баз, созданных ранними версиями.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(requests)").fetchall()]
         for col, ddl in (
@@ -139,7 +144,7 @@ def release_request(request_id: int, master_id: int) -> bool:
         cursor = conn.execute(
             """
             UPDATE requests
-            SET status = 'new', taken_by_id = NULL, taken_by = NULL
+            SET status = 'new', taken_by_id = NULL, taken_by = NULL, released_once = 1
             WHERE id = ? AND status = 'taken' AND taken_by_id = ?
             """,
             (request_id, master_id),
