@@ -45,7 +45,7 @@ async def take_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Уведомляем клиента, что мастер найден
     client_bot = context.bot_data.get("client_bot")
     if client_bot and req:
-        await requests_core.notify_client(client_bot, req, "taken")
+        await requests_core.refresh_client_status(client_bot, req)
 
 
 async def release_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -62,7 +62,7 @@ async def release_request_cb(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Уведомляем клиента, что снова ищем мастера
     client_bot = context.bot_data.get("client_bot")
     if client_bot and req:
-        await requests_core.notify_client(client_bot, req, "released")
+        await requests_core.refresh_client_status(client_bot, req)
 
 
 async def delhist_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
