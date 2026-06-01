@@ -56,6 +56,17 @@ def init_db() -> None:
             )
             """
         )
+        # Сообщения-уведомления мастеру об отмене (чтобы можно было удалить из чата)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cancel_notices (
+                request_id  INTEGER NOT NULL,
+                master_id   INTEGER NOT NULL,
+                message_id  INTEGER NOT NULL,
+                PRIMARY KEY (request_id, master_id)
+            )
+            """
+        )
         # Миграции для баз, созданных ранними версиями.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(requests)").fetchall()]
         for col, ddl in (
@@ -319,3 +330,47 @@ def clear_master_messages(request_id: int) -> None:
     """Удаляет записи об отправленных мастерам сообщениях (пингах) по заявке."""
     with _connect() as conn:
         conn.execute("DELETE FROM master_messages WHERE request_id = ?", (request_id,))
+
+
+def save_cancel_notice(request_id: int, master_id: int, message_id: int) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO cancel_notices (request_id, master_id, message_id) VALUES (?, ?, ?)",
+            (request_id, master_id, message_id),
+        )
+
+
+def get_cancel_notices_for_master(master_id: int) -> list[tuple[int, int]]:
+    """Все уведомления об отмене для мастера: список (request_id, message_id)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT request_id, message_id FROM cancel_notices WHERE master_id = ?",
+            (master_id,),
+        ).fetchall()
+        return [(r["request_id"], r["message_id"]) for r in rows]
+
+
+def get_cancel_notice(request_id: int, master_id: int) -> int | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT message_id FROM cancel_notices WHERE request_id = ? AND master_id = ?",
+            (request_id, master_id),
+        ).fetchone()
+        return row["message_id"] if row else None
+
+
+def delete_cancel_notice(request_id: int, master_id: int) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM cancel_notices WHERE request_id = ? AND master_id = ?",
+            (request_id, master_id),
+        )
+
+
+def hide_one_from_history(master_id: int, request_id: int) -> None:
+    """Прячет одну заявку из истории мастера (данные в базе остаются)."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO hidden_history (master_id, request_id) VALUES (?, ?)",
+            (master_id, request_id),
+        )
