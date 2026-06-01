@@ -153,6 +153,14 @@ async def m_clear_history(request: web.Request) -> web.Response:
     if not user:
         return _cors(web.json_response({"error": "unauthorized"}, status=401))
     n = database.clear_master_history(user["id"])
+    # Удаляем из чата связанные уведомления «клиент отменил»
+    if _master_bot is not None:
+        for rid, message_id in database.get_cancel_notices_for_master(user["id"]):
+            try:
+                await _master_bot.delete_message(chat_id=user["id"], message_id=message_id)
+            except Exception:
+                pass
+            database.delete_cancel_notice(rid, user["id"])
     return _cors(web.json_response({"ok": True, "cleared": n}))
 
 
