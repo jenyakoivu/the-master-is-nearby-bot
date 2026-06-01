@@ -150,16 +150,62 @@ async def m_clear_history(request: web.Request) -> web.Response:
     return _cors(web.json_response({"ok": True, "cleared": n}))
 
 
+async def create_request(request: web.Request) -> web.Response:
+    """POST { initData, problem, district, address, urgency, phone } — создаёт заявку из мини-аппа клиента."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    user = _check_init_data(body.get("initData", ""))
+    if not user or "id" not in user:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+
+    import re as _re
+    problem = str(body.get("problem", "")).strip()
+    district = str(body.get("district", "")).strip()
+    address = str(body.get("address", "")).strip()
+    urgency = str(body.get("urgency", "")).strip()
+    phone = str(body.get("phone", "")).strip()
+
+    # Валидация
+    DISTRICTS = ["Индустриальный", "Северный", "Заягорбский", "Зашекснинский", "Пригород"]
+    URGENCIES = ["Срочно — авария", "Сегодня", "В ближайшие дни"]
+    digits = _re.sub(r"\D", "", phone)
+    if (len(problem) < 3 or district not in DISTRICTS or len(address) < 3
+            or urgency not in URGENCIES or not (10 <= len(digits) <= 15)):
+        return _cors(web.json_response({"error": "invalid"}, status=400))
+
+    # Объект пользователя для save_request
+    class _U:
+        id = user["id"]
+        username = user.get("username")
+        full_name = (user.get("first_name", "") + " " + user.get("last_name", "")).strip() or None
+
+    data = {"problem": problem, "district": district, "address": address,
+            "urgency": urgency, "phone": phone}
+    request_id = database.save_request(data, _U())
+
+    # Рассылаем мастерам через мастерский бот
+    if _master_bot is not None:
+        try:
+            await requests_core.broadcast_new_request(_master_bot, request_id)
+        except Exception:
+            logger.warning("Не удалось разослать заявку мастерам")
+
+    return _cors(web.json_response({"ok": True, "id": request_id}))
+
+
 def make_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/api/my_requests", my_requests)
     app.router.add_post("/api/edit", edit_request)
     app.router.add_post("/api/delete", delete_request)
+    app.router.add_post("/api/create", create_request)
     app.router.add_get("/api/m/board", m_board)
     app.router.add_get("/api/m/mine", m_mine)
     app.router.add_post("/api/m/action", m_action)
     app.router.add_post("/api/m/clear_history", m_clear_history)
-    for path in ("/api/my_requests", "/api/edit", "/api/delete", "/api/m/board", "/api/m/mine", "/api/m/action", "/api/m/clear_history"):
+    for path in ("/api/my_requests", "/api/edit", "/api/delete", "/api/create", "/api/m/board", "/api/m/mine", "/api/m/action", "/api/m/clear_history"):
         app.router.add_options(path, handle_options)
     return app
 
