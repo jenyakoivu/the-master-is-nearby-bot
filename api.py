@@ -137,6 +137,19 @@ async def delete_request(request: web.Request) -> web.Response:
     return _cors(web.json_response({"ok": True}))
 
 
+async def m_clear_history(request: web.Request) -> web.Response:
+    """POST { initData } — прячет историю мастера (данные в базе остаются)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    user = _master_auth(body.get("initData", ""))
+    if not user:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    n = database.clear_master_history(user["id"])
+    return _cors(web.json_response({"ok": True, "cleared": n}))
+
+
 def make_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/api/my_requests", my_requests)
@@ -145,7 +158,8 @@ def make_app() -> web.Application:
     app.router.add_get("/api/m/board", m_board)
     app.router.add_get("/api/m/mine", m_mine)
     app.router.add_post("/api/m/action", m_action)
-    for path in ("/api/my_requests", "/api/edit", "/api/delete", "/api/m/board", "/api/m/mine", "/api/m/action"):
+    app.router.add_post("/api/m/clear_history", m_clear_history)
+    for path in ("/api/my_requests", "/api/edit", "/api/delete", "/api/m/board", "/api/m/mine", "/api/m/action", "/api/m/clear_history"):
         app.router.add_options(path, handle_options)
     return app
 
