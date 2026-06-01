@@ -103,13 +103,16 @@ async def edit_request(request: web.Request) -> web.Response:
     if status is None:
         return _cors(web.json_response({"error": "not_editable"}, status=403))
 
-    # Если заявку уже взяли — обновим карточку у мастеров (адрес/телефон могли измениться)
+    # Если заявку уже взяли — обновим пинг-логику и карточки у мастеров
     if status == "taken" and _master_bot is not None:
         req = database.get_request(rid)
         if req:
             await requests_core.broadcast_update(_master_bot, req)
 
     req = database.get_request(rid)
+    # Обновляем сообщение-статус у клиента (данные могли измениться)
+    if _client_bot is not None and req:
+        await requests_core.refresh_client_status(_client_bot, req)
     return _cors(web.json_response({"ok": True, "request": _req_to_dict(req)}))
 
 
@@ -133,13 +136,14 @@ async def delete_request(request: web.Request) -> web.Response:
     ok = database.cancel_request(rid, user["id"])
     if not ok:
         return _cors(web.json_response({"error": "not_found"}, status=404))
-    if _master_bot is not None:
-        req = database.get_request(rid)
-        if req:
-            await requests_core.broadcast_update(_master_bot, req)  # уберёт пинг, если был
-            # Если заявку уже взял мастер — личное уведомление ему
-            if taker_id:
-                await requests_core.notify_master_canceled(_master_bot, taker_id, req)
+    req = database.get_request(rid)
+    if _master_bot is not None and req:
+        await requests_core.broadcast_update(_master_bot, req)  # уберёт пинг, если был
+        if taker_id:
+            await requests_core.notify_master_canceled(_master_bot, taker_id, req)
+    # Убираем сообщение-статус у клиента
+    if _client_bot is not None and req:
+        await requests_core.refresh_client_status(_client_bot, req)  # canceled -> удалит
     return _cors(web.json_response({"ok": True}))
 
 
@@ -199,12 +203,16 @@ async def create_request(request: web.Request) -> web.Response:
             "urgency": urgency, "phone": phone}
     request_id = database.save_request(data, _U())
 
-    # Рассылаем мастерам через мастерский бот
+    # Рассылаем мастерам пинг + отправляем клиенту сообщение-статус
     if _master_bot is not None:
         try:
             await requests_core.broadcast_new_request(_master_bot, request_id)
         except Exception:
             logger.warning("Не удалось разослать заявку мастерам")
+    if _client_bot is not None:
+        req = database.get_request(request_id)
+        if req:
+            await requests_core.refresh_client_status(_client_bot, req)
 
     return _cors(web.json_response({"ok": True, "id": request_id}))
 
@@ -326,19 +334,19 @@ async def m_action(request: web.Request) -> web.Response:
         if ok and _client_bot is not None:
             req = database.get_request(rid)
             if req:
-                await requests_core.notify_client(_client_bot, req, "taken")
+                await requests_core.refresh_client_status(_client_bot, req)
     elif action == "release":
         ok = database.release_request(rid, mid)
         if ok and _client_bot is not None:
             req = database.get_request(rid)
             if req:
-                await requests_core.notify_client(_client_bot, req, "released")
+                await requests_core.refresh_client_status(_client_bot, req)
     else:  # complete
         ok = database.complete_request(rid, mid)
         if ok and _client_bot is not None:
             req = database.get_request(rid)
             if req:
-                await requests_core.notify_client(_client_bot, req, "done")
+                await requests_core.refresh_client_status(_client_bot, req)
 
     if not ok:
         return _cors(web.json_response({"error": "not_allowed"}, status=403))
