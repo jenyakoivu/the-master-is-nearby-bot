@@ -194,7 +194,7 @@ def get_user_requests(user_id: int, limit: int = 10) -> list[dict]:
             """
             SELECT id, created_at, problem, district, address, urgency, phone, status
             FROM requests
-            WHERE user_id = ? AND status != 'canceled'
+            WHERE user_id = ? AND status IN ('new', 'taken')
             ORDER BY id DESC
             LIMIT ?
             """,
