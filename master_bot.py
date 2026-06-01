@@ -18,7 +18,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_html(
             "🧰 <b>Сантехник Рядом — кабинет мастера</b>\n\n"
             "Вы в системе. Новые заявки будут приходить сюда автоматически.\n"
-            "Берите свободные заявки кнопкой «✋ Взять заявку»."
+            "Берите свободные заявки в кабинете мастера кнопкой «✋ Взять в работу»."
         )
     else:
         await update.message.reply_html(
