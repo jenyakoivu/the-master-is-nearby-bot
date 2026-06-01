@@ -125,21 +125,25 @@ async def notify_master_canceled(master_bot, master_id: int, req: dict) -> None:
 # ---------- Сообщение-статус заявки в чате клиента ----------
 # Одна заявка = одно сообщение. При смене статуса старое удаляется, новое присылается.
 
-_CLIENT_STATUS = {
-    "new": "🟢 Ищем мастера",
-    "taken": "✅ Мастер найден",
-    "done": "🏁 Заявка выполнена",
-}
-
-
 def _client_status_text(req: dict) -> str:
-    status_line = _CLIENT_STATUS.get(req["status"], req["status"])
+    status = req["status"]
+    if status == "new":
+        if req.get("released_once"):
+            status_line = "🔄🔍 Снова ищем мастера"
+        else:
+            status_line = "🔍 Ищем мастера"
+    elif status == "taken":
+        status_line = "✅ Нашли для вас мастера"
+    elif status == "done":
+        status_line = "🏁 Заявка выполнена"
+    else:
+        status_line = status
     return (
         f"<b>Заявка №{req['id']}</b> · {status_line}\n\n"
         f"🛠 {html.escape(req['problem'])}\n"
         f"📍 {html.escape(req['district'])}, {html.escape(req['address'] or '—')}\n"
         f"⏱ {html.escape(req['urgency'])}\n"
-        f"📱 {html.escape(req['phone'])}"
+        f"📞 {html.escape(req['phone'])}"
     )
 
 
