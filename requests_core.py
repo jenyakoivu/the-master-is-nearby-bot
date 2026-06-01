@@ -25,7 +25,7 @@ def _ping_text(req: dict) -> str:
     return (
         f"🆕 <b>Новая заявка №{req['id']}</b>\n"
         f"📍 {html.escape(req['district'])} · ⏱ {html.escape(req['urgency'])}\n"
-        f"Откройте «Доску заявок», чтобы взять."
+        f"Откройте «Доску заявок» в кабинете мастера, чтобы принять."
     )
 
 
@@ -112,7 +112,7 @@ async def notify_master_canceled(master_bot, master_id: int, req: dict) -> None:
             chat_id=master_id,
             text=(
                 f"❌ <b>Клиент отменил заявку №{req['id']}</b>\n"
-                f"«{html.escape(req['problem'])}» — больше выполнять не нужно."
+                f"«{html.escape(req['problem'])}» — заявка больше не актуальна."
             ),
             parse_mode="HTML",
             reply_markup=kb,
@@ -127,6 +127,7 @@ async def notify_master_canceled(master_bot, master_id: int, req: dict) -> None:
 
 def _client_status_text(req: dict) -> str:
     status = req["status"]
+    extra = ""
     if status == "new":
         if req.get("released_once"):
             status_line = "🔄🔍 Снова ищем мастера"
@@ -134,6 +135,7 @@ def _client_status_text(req: dict) -> str:
             status_line = "🔍 Ищем мастера"
     elif status == "taken":
         status_line = "✅ Нашли для вас мастера"
+        extra = "\n\nМастер скоро свяжется с вами 📞"
     elif status == "done":
         status_line = "🏁 Заявка выполнена"
     else:
@@ -144,6 +146,7 @@ def _client_status_text(req: dict) -> str:
         f"📍 {html.escape(req['district'])}, {html.escape(req['address'] or '—')}\n"
         f"⏱ {html.escape(req['urgency'])}\n"
         f"📞 {html.escape(req['phone'])}"
+        + extra
     )
 
 
