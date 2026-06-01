@@ -101,15 +101,22 @@ async def notify_client(client_bot, req: dict, event: str) -> None:
 
 
 async def notify_master_canceled(master_bot, master_id: int, req: dict) -> None:
-    """Личное уведомление мастеру: клиент отменил уже взятую им заявку."""
+    """Личное уведомление мастеру: клиент отменил уже взятую им заявку.
+    Запоминаем id сообщения и вешаем кнопку «Удалить из истории»."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🗑 Удалить из истории", callback_data=f"delhist:{req['id']}")]]
+    )
     try:
-        await master_bot.send_message(
+        msg = await master_bot.send_message(
             chat_id=master_id,
             text=(
                 f"❌ <b>Клиент отменил заявку №{req['id']}</b>\n"
                 f"«{html.escape(req['problem'])}» — больше выполнять не нужно."
             ),
             parse_mode="HTML",
+            reply_markup=kb,
         )
+        database.save_cancel_notice(req["id"], master_id, msg.message_id)
     except Exception:
         logger.warning("Не удалось уведомить мастера об отмене %s", master_id)
