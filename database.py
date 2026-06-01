@@ -313,3 +313,9 @@ def clear_master_history(master_id: int) -> int:
                 (master_id, rid),
             )
         return len(ids)
+
+
+def clear_master_messages(request_id: int) -> None:
+    """Удаляет записи об отправленных мастерам сообщениях (пингах) по заявке."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM master_messages WHERE request_id = ?", (request_id,))
