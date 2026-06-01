@@ -71,6 +71,7 @@ def _req_to_dict(r: dict) -> dict:
         "address": r["address"] or "",
         "urgency": r["urgency"],
         "phone": r["phone"],
+        "phone_show": requests_core.format_ru_phone(r["phone"]),
         "status": r["status"],
         "date": (r["created_at"] or "")[:10],
     }
@@ -178,19 +179,18 @@ async def create_request(request: web.Request) -> web.Response:
     if not user or "id" not in user:
         return _cors(web.json_response({"error": "unauthorized"}, status=401))
 
-    import re as _re
     problem = str(body.get("problem", "")).strip()
     district = str(body.get("district", "")).strip()
     address = str(body.get("address", "")).strip()
     urgency = str(body.get("urgency", "")).strip()
-    phone = str(body.get("phone", "")).strip()
+    phone_raw = str(body.get("phone", "")).strip()
 
-    # Валидация
+    # Валидация. Телефон — строго РФ (нормализуем к +7XXXXXXXXXX).
     DISTRICTS = ["Индустриальный", "Северный", "Заягорбский", "Зашекснинский", "Пригород"]
     URGENCIES = ["Срочно — авария", "Сегодня", "В ближайшие дни"]
-    digits = _re.sub(r"\D", "", phone)
+    phone = requests_core.normalize_ru_phone(phone_raw)
     if (len(problem) < 3 or district not in DISTRICTS or len(address) < 3
-            or urgency not in URGENCIES or not (10 <= len(digits) <= 15)):
+            or urgency not in URGENCIES or phone is None):
         return _cors(web.json_response({"error": "invalid"}, status=400))
 
     # Объект пользователя для save_request
@@ -285,7 +285,9 @@ def _master_card_dict(r: dict, show_contact: bool) -> dict:
         "date": (r["created_at"] or "")[:10],
     }
     if show_contact:
-        d["phone"] = r.get("phone", "")
+        ph = r.get("phone", "")
+        d["phone"] = requests_core.format_ru_phone(ph)   # красивый показ
+        d["phone_dial"] = requests_core.phone_for_dial(ph)  # для tel:
         d["username"] = r.get("username") or ""
         d["full_name"] = r.get("full_name") or ""
     return d
