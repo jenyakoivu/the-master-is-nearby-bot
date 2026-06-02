@@ -87,6 +87,36 @@ def init_db() -> None:
             conn.execute("ALTER TABLE requests ADD COLUMN source TEXT DEFAULT 'tg'")
         except Exception:
             pass
+        # ВК: кто разрешил сообщения от сообщества
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vk_allowed (
+                vk_id INTEGER PRIMARY KEY,
+                allowed INTEGER DEFAULT 1
+            )
+            """
+        )
+        # ВК: сообщение-статус заявки в личке клиента (одно на заявку, как в ТГ)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vk_client_status (
+                request_id INTEGER PRIMARY KEY,
+                vk_id      INTEGER NOT NULL,
+                message_id INTEGER NOT NULL
+            )
+            """
+        )
+        # ВК: пинги мастерам о заявке (как master_messages в ТГ)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vk_master_pings (
+                request_id INTEGER NOT NULL,
+                vk_id      INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                PRIMARY KEY (request_id, vk_id)
+            )
+            """
+        )
         # Миграции для баз, созданных ранними версиями.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(requests)").fetchall()]
         for col, ddl in (
@@ -417,3 +447,51 @@ def get_client_status_message(request_id: int):
 def delete_client_status_message(request_id: int) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM client_status_messages WHERE request_id = ?", (request_id,))
+
+
+# ===== ВК: разрешения на сообщения и id сообщений =====
+
+def vk_set_allowed(vk_id: int, allowed: bool = True) -> None:
+    with _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO vk_allowed (vk_id, allowed) VALUES (?, ?)",
+                     (vk_id, 1 if allowed else 0))
+
+
+def vk_is_allowed(vk_id: int) -> bool:
+    with _connect() as conn:
+        row = conn.execute("SELECT allowed FROM vk_allowed WHERE vk_id = ?", (vk_id,)).fetchone()
+        return bool(row and row["allowed"])
+
+
+def vk_save_client_status(request_id: int, vk_id: int, message_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO vk_client_status (request_id, vk_id, message_id) VALUES (?, ?, ?)",
+                     (request_id, vk_id, message_id))
+
+
+def vk_get_client_status(request_id: int):
+    with _connect() as conn:
+        row = conn.execute("SELECT vk_id, message_id FROM vk_client_status WHERE request_id = ?", (request_id,)).fetchone()
+        return (row["vk_id"], row["message_id"]) if row else None
+
+
+def vk_delete_client_status(request_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM vk_client_status WHERE request_id = ?", (request_id,))
+
+
+def vk_save_master_ping(request_id: int, vk_id: int, message_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO vk_master_pings (request_id, vk_id, message_id) VALUES (?, ?, ?)",
+                     (request_id, vk_id, message_id))
+
+
+def vk_get_master_pings(request_id: int) -> list[tuple[int, int]]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT vk_id, message_id FROM vk_master_pings WHERE request_id = ?", (request_id,)).fetchall()
+        return [(r["vk_id"], r["message_id"]) for r in rows]
+
+
+def vk_clear_master_pings(request_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM vk_master_pings WHERE request_id = ?", (request_id,))
