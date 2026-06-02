@@ -61,11 +61,15 @@ def edit(vk_id: int, message_id: int, text: str) -> bool:
 
 
 def delete(vk_id: int, message_id: int) -> bool:
+    """Удаляет сообщение у всех. Возвращает True только при реальном успехе."""
     resp = _call("messages.delete", {
         "message_ids": message_id,
         "delete_for_all": 1,
     })
-    return resp is not None
+    # Успех: ВК возвращает объект вида {"<message_id>": 1}
+    if isinstance(resp, dict):
+        return any(v == 1 for v in resp.values())
+    return False
 
 
 # ---------- Пинги мастерам ВК ----------
@@ -124,14 +128,17 @@ def _client_status_text(req: dict) -> str:
 
 
 def refresh_client_status(req: dict) -> None:
-    """Одно сообщение-статус на заявку: редактируем при смене статуса.
-    canceled — удаляем. Работает только если клиент разрешил сообщения."""
+    """Чистый диалог как в ТГ: при смене статуса удаляем старое сообщение и шлём новое
+    (новое приходит как уведомление). Если ВК отказал в удалении — откатываемся на
+    редактирование старого, чтобы у клиента никогда не было двух сообщений.
+    canceled — удаляем без пересоздания. Работает только если клиент разрешил сообщения."""
     vk_id = req.get("user_id")
     if not vk_id or not database.vk_is_allowed(int(vk_id)):
         return
     rid = req["id"]
     prev = database.vk_get_client_status(rid)
 
+    # Отменённая заявка — сообщение убираем и не пересоздаём
     if req["status"] == "canceled":
         if prev:
             delete(prev[0], prev[1])
@@ -139,14 +146,26 @@ def refresh_client_status(req: dict) -> None:
         return
 
     text = _client_status_text(req)
-    if prev:
-        # редактируем существующее сообщение
-        ok = edit(prev[0], prev[1], text)
-        if ok:
-            return
-        # если не получилось отредактировать — удалим и пошлём заново
-        delete(prev[0], prev[1])
+
+    # Нет предыдущего — просто шлём новое
+    if not prev:
+        msg_id = send(int(vk_id), text)
+        if msg_id:
+            database.vk_save_client_status(rid, int(vk_id), msg_id)
+        return
+
+    # Есть предыдущее — основной путь: удалить старое и прислать новое (как в ТГ)
+    deleted = delete(prev[0], prev[1])
+    if deleted:
         database.vk_delete_client_status(rid)
-    msg_id = send(int(vk_id), text)
-    if msg_id:
-        database.vk_save_client_status(rid, int(vk_id), msg_id)
+        msg_id = send(int(vk_id), text)
+        if msg_id:
+            database.vk_save_client_status(rid, int(vk_id), msg_id)
+    else:
+        # ВК не дал удалить — запасной путь: редактируем старое (без дубля)
+        ok = edit(prev[0], prev[1], text)
+        if not ok:
+            # совсем не вышло — пробуем прислать новое, чтобы клиент хотя бы узнал
+            msg_id = send(int(vk_id), text)
+            if msg_id:
+                database.vk_save_client_status(rid, int(vk_id), msg_id)
