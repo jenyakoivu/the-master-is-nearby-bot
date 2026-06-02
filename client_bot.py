@@ -18,7 +18,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     text = (
         f"👋 Здравствуйте, {user.first_name}!\n\n"
-        "Это <b>Техник Рядом</b> — вызов мастера в Череповце за пару минут.\n\n"
+        "Это <b>Мастер Рядом</b> — вызов мастера в Череповце за пару минут.\n\n"
         "Опишите проблему в приложении — мастер свяжется с вами. "
         "Здесь, в чате, будут приходить статусы ваших заявок."
     )
@@ -33,7 +33,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         [[InlineKeyboardButton("📝 Открыть приложение", web_app=WebAppInfo(url=MINIAPP_URL))]]
     )
     await update.message.reply_html(
-        "ℹ️ <b>Техник Рядом</b>\n\n"
+        "ℹ️ <b>Мастер Рядом</b>\n\n"
         "Все заявки — в приложении: кнопка ниже или «Мои заявки» рядом с полем ввода.\n"
         "В чат приходят статусы ваших заявок.",
         reply_markup=kb,
