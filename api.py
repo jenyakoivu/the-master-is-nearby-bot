@@ -73,6 +73,7 @@ def _req_to_dict(r: dict) -> dict:
         "phone": r["phone"],
         "phone_show": requests_core.format_ru_phone(r["phone"]),
         "status": r["status"],
+        "released_once": r["released_once"] if "released_once" in r.keys() else 0,
         "date": (r["created_at"] or "")[:10],
     }
 
@@ -291,6 +292,17 @@ def _master_card_dict(r: dict, show_contact: bool) -> dict:
         d["phone_dial"] = requests_core.phone_for_dial(ph)  # для tel:
         d["username"] = r.get("username") or ""
         d["full_name"] = r.get("full_name") or ""
+        source = r.get("source") or "tg"
+        d["source"] = source
+        if source == "vk":
+            d["client_link"] = f"https://vk.com/id{r.get('user_id')}"
+            d["client_label"] = f"Профиль ВК"
+        elif r.get("username"):
+            d["client_link"] = f"https://t.me/{r.get('username')}"
+            d["client_label"] = "@" + r.get("username")
+        else:
+            d["client_link"] = ""
+            d["client_label"] = r.get("full_name") or ""
     return d
 
 
@@ -458,7 +470,7 @@ async def vk_create(request: web.Request) -> web.Response:
         return _cors(web.json_response({"error": "invalid"}, status=400))
     data = {"problem": problem, "district": district, "address": address,
             "urgency": urgency, "phone": phone}
-    request_id = database.save_request(data, make_vk_user(vk_id))
+    request_id = database.save_request(data, make_vk_user(vk_id), source="vk")
     if _master_bot is not None:
         try:
             await requests_core.broadcast_new_request(_master_bot, request_id)
