@@ -12,6 +12,7 @@ from aiohttp import web
 import config
 import database
 import requests_core
+import vk_notify
 
 logger = logging.getLogger(__name__)
 
@@ -471,15 +472,19 @@ async def vk_create(request: web.Request) -> web.Response:
     data = {"problem": problem, "district": district, "address": address,
             "urgency": urgency, "phone": phone}
     request_id = database.save_request(data, make_vk_user(vk_id), source="vk")
+    # Уведомления в Telegram-мастер-бот (общий пул) + ВК-мастерам
     if _master_bot is not None:
         try:
             await requests_core.broadcast_new_request(_master_bot, request_id)
         except Exception:
             pass
-    if _client_bot is not None:
+    try:
+        vk_notify.send_master_pings(request_id)
         req = database.get_request(request_id)
         if req:
-            await requests_core.refresh_client_status(_client_bot, req)
+            vk_notify.refresh_client_status(req)
+    except Exception:
+        logger.warning("VK-уведомления при создании не отправлены")
     return _cors(web.json_response({"ok": True, "id": request_id}))
 
 
@@ -534,6 +539,13 @@ async def vk_delete(request: web.Request) -> web.Response:
             await requests_core.notify_master_canceled(_master_bot, taker_id, req)
     if _client_bot is not None and req:
         await requests_core.refresh_client_status(_client_bot, req)
+    # ВК: убрать пинги мастеров и сообщение-статус клиента
+    try:
+        if req:
+            vk_notify.remove_master_pings(rid)
+            vk_notify.refresh_client_status(req)  # canceled -> удалит
+    except Exception:
+        logger.warning("VK-уведомления при отмене не отправлены")
     return _cors(web.json_response({"ok": True}))
 
 
@@ -593,6 +605,17 @@ async def vk_m_action(request: web.Request) -> web.Response:
         await requests_core.refresh_client_status(_client_bot, req)
     if _master_bot is not None and req:
         await requests_core.broadcast_update(_master_bot, req)
+    # ВК-уведомления
+    try:
+        if req:
+            vk_notify.refresh_client_status(req)
+            if req["status"] == "new":
+                vk_notify.remove_master_pings(rid)
+                vk_notify.send_master_pings(rid)
+            else:
+                vk_notify.remove_master_pings(rid)
+    except Exception:
+        logger.warning("VK-уведомления при действии мастера не отправлены")
     return _cors(web.json_response({"ok": True}))
 
 
@@ -608,8 +631,23 @@ async def vk_m_clear_history(request: web.Request) -> web.Response:
     return _cors(web.json_response({"ok": True, "cleared": n}))
 
 
+async def vk_allow(request: web.Request) -> web.Response:
+    """Клиент/мастер разрешил сообщения от сообщества — записываем."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    vk_id = _vk_user_id(body.get("sign_params", ""))
+    if not vk_id:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    allowed = bool(body.get("allowed", True))
+    database.vk_set_allowed(int(vk_id), allowed)
+    return _cors(web.json_response({"ok": True}))
+
+
 def register_vk_routes(app: web.Application) -> None:
     app.router.add_get("/api/vk/me", vk_me)
+    app.router.add_post("/api/vk/allow", vk_allow)
     app.router.add_get("/api/vk/my_requests", vk_my_requests)
     app.router.add_post("/api/vk/create", vk_create)
     app.router.add_post("/api/vk/edit", vk_edit)
@@ -618,7 +656,7 @@ def register_vk_routes(app: web.Application) -> None:
     app.router.add_get("/api/vk/m/mine", vk_m_mine)
     app.router.add_post("/api/vk/m/action", vk_m_action)
     app.router.add_post("/api/vk/m/clear_history", vk_m_clear_history)
-    for path in ("/api/vk/me", "/api/vk/my_requests", "/api/vk/create", "/api/vk/edit",
+    for path in ("/api/vk/me", "/api/vk/allow", "/api/vk/my_requests", "/api/vk/create", "/api/vk/edit",
                  "/api/vk/delete", "/api/vk/m/board", "/api/vk/m/mine",
                  "/api/vk/m/action", "/api/vk/m/clear_history"):
         app.router.add_options(path, handle_options)
