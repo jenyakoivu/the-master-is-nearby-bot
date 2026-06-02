@@ -229,6 +229,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/m/clear_history", m_clear_history)
     for path in ("/api/my_requests", "/api/edit", "/api/delete", "/api/create", "/api/m/board", "/api/m/mine", "/api/m/action", "/api/m/clear_history"):
         app.router.add_options(path, handle_options)
+    register_vk_routes(app)
     return app
 
 
@@ -358,3 +359,254 @@ async def m_action(request: web.Request) -> web.Response:
         if req:
             await requests_core.broadcast_update(_master_bot, req)
     return _cors(web.json_response({"ok": True}))
+
+
+# ================= ВКонтакте (мини-приложение) =================
+# Проверка подписи параметров запуска VK Mini App и эндпоинты для ВК-клиента/мастера.
+
+import base64
+from urllib.parse import urlencode
+
+
+def _check_vk_sign(query: str) -> dict | None:
+    """Проверяет подпись параметров запуска VK Mini App.
+    query — строка параметров (то, что после ? в URL запуска).
+    Возвращает dict параметров (vk_user_id и т.д.) если подпись верна, иначе None."""
+    if not config.VK_SECRET:
+        return None
+    try:
+        params = dict(parse_qsl(query, keep_blank_values=True))
+    except Exception:
+        return None
+    sign = params.get("sign")
+    if not sign:
+        return None
+    # Берём только vk_-параметры, сортируем, собираем query-строку
+    vk_params = {k: v for k, v in params.items() if k.startswith("vk_")}
+    if not vk_params:
+        return None
+    ordered = sorted(vk_params.items())
+    check_string = urlencode(ordered)
+    digest = hmac.new(config.VK_SECRET.encode(), check_string.encode(), hashlib.sha256).digest()
+    calc_sign = base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    if not hmac.compare_digest(calc_sign, sign):
+        return None
+    return params
+
+
+def _vk_user_id(query: str) -> str | None:
+    params = _check_vk_sign(query)
+    if not params:
+        return None
+    return params.get("vk_user_id")
+
+
+def _vk_role(vk_id: str) -> str:
+    """Возвращает роль пользователя ВК: admin / master / client."""
+    sid = str(vk_id)
+    if sid in [str(a) for a in config.VK_ADMIN_IDS]:
+        return "admin"
+    if sid in [str(m) for m in config.VK_MASTER_IDS]:
+        return "master"
+    return "client"
+
+
+async def vk_me(request: web.Request) -> web.Response:
+    """Возвращает роль пользователя (для выбора экрана в мини-аппе ВК)."""
+    vk_id = _vk_user_id(request.query.get("sign_params", ""))
+    if not vk_id:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    return _cors(web.json_response({"vk_id": vk_id, "role": _vk_role(vk_id)}))
+
+
+def make_vk_user(vk_id: str):
+    """Псевдо-объект пользователя для save_request (ВК-клиент)."""
+    class _U:
+        id = int(vk_id)
+        username = None
+        full_name = f"VK id{vk_id}"
+    return _U()
+
+
+# ----- ВК: эндпоинты заявок (клиент) -----
+
+async def vk_my_requests(request: web.Request) -> web.Response:
+    vk_id = _vk_user_id(request.query.get("sign_params", ""))
+    if not vk_id:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    rows = database.get_user_requests(int(vk_id))
+    return _cors(web.json_response({"requests": [_req_to_dict(r) for r in rows]}))
+
+
+async def vk_create(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    vk_id = _vk_user_id(body.get("sign_params", ""))
+    if not vk_id:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    problem = str(body.get("problem", "")).strip()
+    district = str(body.get("district", "")).strip()
+    address = str(body.get("address", "")).strip()
+    urgency = str(body.get("urgency", "")).strip()
+    phone = requests_core.normalize_ru_phone(str(body.get("phone", "")).strip())
+    DISTRICTS = ["Индустриальный", "Северный", "Заягорбский", "Зашекснинский", "Пригород"]
+    URGENCIES = ["Срочно — авария", "Сегодня", "В ближайшие дни"]
+    if (len(problem) < 3 or district not in DISTRICTS or len(address) < 3
+            or urgency not in URGENCIES or phone is None):
+        return _cors(web.json_response({"error": "invalid"}, status=400))
+    data = {"problem": problem, "district": district, "address": address,
+            "urgency": urgency, "phone": phone}
+    request_id = database.save_request(data, make_vk_user(vk_id))
+    if _master_bot is not None:
+        try:
+            await requests_core.broadcast_new_request(_master_bot, request_id)
+        except Exception:
+            pass
+    if _client_bot is not None:
+        req = database.get_request(request_id)
+        if req:
+            await requests_core.refresh_client_status(_client_bot, req)
+    return _cors(web.json_response({"ok": True, "id": request_id}))
+
+
+async def vk_edit(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    vk_id = _vk_user_id(body.get("sign_params", ""))
+    if not vk_id:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    rid = body.get("id")
+    fields = body.get("fields", {})
+    if not isinstance(rid, int) or not isinstance(fields, dict):
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    if "phone" in fields and fields["phone"]:
+        norm = requests_core.normalize_ru_phone(str(fields["phone"]))
+        if norm is None:
+            return _cors(web.json_response({"error": "invalid_phone"}, status=400))
+        fields["phone"] = norm
+    status = database.update_request(rid, int(vk_id), fields)
+    if status is None:
+        return _cors(web.json_response({"error": "not_editable"}, status=403))
+    req = database.get_request(rid)
+    if status == "taken" and _master_bot is not None and req:
+        await requests_core.broadcast_update(_master_bot, req)
+    if _client_bot is not None and req:
+        await requests_core.refresh_client_status(_client_bot, req)
+    return _cors(web.json_response({"ok": True, "request": _req_to_dict(req)}))
+
+
+async def vk_delete(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    vk_id = _vk_user_id(body.get("sign_params", ""))
+    if not vk_id:
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    rid = body.get("id")
+    if not isinstance(rid, int):
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    before = database.get_request(rid)
+    taker_id = before["taken_by_id"] if before and before["status"] == "taken" else None
+    ok = database.cancel_request(rid, int(vk_id))
+    if not ok:
+        return _cors(web.json_response({"error": "not_found"}, status=404))
+    req = database.get_request(rid)
+    if _master_bot is not None and req:
+        await requests_core.broadcast_update(_master_bot, req)
+        if taker_id:
+            await requests_core.notify_master_canceled(_master_bot, taker_id, req)
+    if _client_bot is not None and req:
+        await requests_core.refresh_client_status(_client_bot, req)
+    return _cors(web.json_response({"ok": True}))
+
+
+# ----- ВК: эндпоинты мастера -----
+
+def _vk_is_master(vk_id: str) -> bool:
+    return _vk_role(vk_id) in ("master", "admin")
+
+
+async def vk_m_board(request: web.Request) -> web.Response:
+    vk_id = _vk_user_id(request.query.get("sign_params", ""))
+    if not vk_id or not _vk_is_master(vk_id):
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    rows = database.get_open_requests()
+    return _cors(web.json_response({"requests": [_master_card_dict(r, False) for r in rows]}))
+
+
+async def vk_m_mine(request: web.Request) -> web.Response:
+    vk_id = _vk_user_id(request.query.get("sign_params", ""))
+    if not vk_id or not _vk_is_master(vk_id):
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    active = database.get_master_active(int(vk_id))
+    history = database.get_master_history(int(vk_id))
+    return _cors(web.json_response({
+        "active": [_master_card_dict(r, True) for r in active],
+        "history": [_master_card_dict(r, True) for r in history],
+    }))
+
+
+async def vk_m_action(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    vk_id = _vk_user_id(body.get("sign_params", ""))
+    if not vk_id or not _vk_is_master(vk_id):
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    rid = body.get("id")
+    action = body.get("action")
+    if not isinstance(rid, int) or action not in ("take", "release", "complete"):
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    mid = int(vk_id)
+    mname = f"VK id{vk_id}"
+    if action == "take":
+        ok = database.take_request(rid, mid, mname)
+        event = "taken"
+    elif action == "release":
+        ok = database.release_request(rid, mid)
+        event = "released"
+    else:
+        ok = database.complete_request(rid, mid)
+        event = "done"
+    if not ok:
+        return _cors(web.json_response({"error": "not_allowed"}, status=403))
+    req = database.get_request(rid)
+    if _client_bot is not None and req:
+        await requests_core.refresh_client_status(_client_bot, req)
+    if _master_bot is not None and req:
+        await requests_core.broadcast_update(_master_bot, req)
+    return _cors(web.json_response({"ok": True}))
+
+
+async def vk_m_clear_history(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _cors(web.json_response({"error": "bad_request"}, status=400))
+    vk_id = _vk_user_id(body.get("sign_params", ""))
+    if not vk_id or not _vk_is_master(vk_id):
+        return _cors(web.json_response({"error": "unauthorized"}, status=401))
+    n = database.clear_master_history(int(vk_id))
+    return _cors(web.json_response({"ok": True, "cleared": n}))
+
+
+def register_vk_routes(app: web.Application) -> None:
+    app.router.add_get("/api/vk/me", vk_me)
+    app.router.add_get("/api/vk/my_requests", vk_my_requests)
+    app.router.add_post("/api/vk/create", vk_create)
+    app.router.add_post("/api/vk/edit", vk_edit)
+    app.router.add_post("/api/vk/delete", vk_delete)
+    app.router.add_get("/api/vk/m/board", vk_m_board)
+    app.router.add_get("/api/vk/m/mine", vk_m_mine)
+    app.router.add_post("/api/vk/m/action", vk_m_action)
+    app.router.add_post("/api/vk/m/clear_history", vk_m_clear_history)
+    for path in ("/api/vk/me", "/api/vk/my_requests", "/api/vk/create", "/api/vk/edit",
+                 "/api/vk/delete", "/api/vk/m/board", "/api/vk/m/mine",
+                 "/api/vk/m/action", "/api/vk/m/clear_history"):
+        app.router.add_options(path, handle_options)
