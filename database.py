@@ -82,6 +82,11 @@ def init_db() -> None:
             conn.execute("ALTER TABLE requests ADD COLUMN released_once INTEGER DEFAULT 0")
         except Exception:
             pass
+        # Источник заявки: tg (Telegram) или vk (ВКонтакте)
+        try:
+            conn.execute("ALTER TABLE requests ADD COLUMN source TEXT DEFAULT 'tg'")
+        except Exception:
+            pass
         # Миграции для баз, созданных ранними версиями.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(requests)").fetchall()]
         for col, ddl in (
@@ -94,14 +99,14 @@ def init_db() -> None:
                 conn.execute(ddl)
 
 
-def save_request(data: dict, user) -> int:
+def save_request(data: dict, user, source: str = "tg") -> int:
     with _connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO requests
                 (created_at, problem, district, address, urgency, phone,
-                 user_id, username, full_name, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+                 user_id, username, full_name, status, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
             """,
             (
                 datetime.now().isoformat(timespec="seconds"),
@@ -113,6 +118,7 @@ def save_request(data: dict, user) -> int:
                 user.id,
                 user.username,
                 user.full_name,
+                source,
             ),
         )
         return cursor.lastrowid
@@ -192,7 +198,7 @@ def get_user_requests(user_id: int, limit: int = 10) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, created_at, problem, district, address, urgency, phone, status
+            SELECT id, created_at, problem, district, address, urgency, phone, status, released_once
             FROM requests
             WHERE user_id = ? AND status IN ('new', 'taken')
             ORDER BY id DESC
@@ -291,7 +297,7 @@ def get_master_active(master_id: int) -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, created_at, problem, district, address, urgency, phone,
-                   username, full_name, status
+                   username, full_name, status, user_id, source
             FROM requests
             WHERE status = 'taken' AND taken_by_id = ?
             ORDER BY id DESC
@@ -308,7 +314,7 @@ def get_master_history(master_id: int, limit: int = 50) -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, created_at, problem, district, address, urgency, phone,
-                   username, full_name, status
+                   username, full_name, status, user_id, source
             FROM requests
             WHERE taken_by_id = ? AND status IN ('done', 'canceled')
               AND id NOT IN (SELECT request_id FROM hidden_history WHERE master_id = ?)
