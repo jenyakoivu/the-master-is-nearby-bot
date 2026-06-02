@@ -27,6 +27,10 @@ VK_MASTER_IDS = [m.strip() for m in _raw_vk_masters.split(",") if m.strip()]
 # VK ID администраторов (через запятую). Видят переключатель Клиент/Мастер.
 _raw_vk_admins = os.getenv("VK_ADMIN_IDS", "")
 VK_ADMIN_IDS = [m.strip() for m in _raw_vk_admins.split(",") if m.strip()]
+# Токен сообщества ВК — для отправки уведомлений в личку (messages.send).
+VK_GROUP_TOKEN = os.getenv("VK_GROUP_TOKEN")
+# ID сообщества ВК.
+VK_GROUP_ID = os.getenv("VK_GROUP_ID")
 
 
 def validate() -> None:
