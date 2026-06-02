@@ -16,13 +16,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if str(user.id) in [str(m) for m in config.MASTER_IDS]:
         await update.message.reply_html(
-            "🧰 <b>Сантехник Рядом — кабинет мастера</b>\n\n"
+            "🧰 <b>Мастер Рядом — кабинет мастера</b>\n\n"
             "Вы в системе. Новые заявки будут приходить сюда автоматически.\n"
             "Берите свободные заявки в кабинете мастера кнопкой «✋ Взять в работу»."
         )
     else:
         await update.message.reply_html(
-            "Этот бот — только для мастеров сервиса «Сантехник Рядом».\n\n"
+            "Этот бот — только для мастеров сервиса «Мастер Рядом».\n\n"
             f"Ваш id: <code>{user.id}</code>\n"
             "Передайте его администратору, чтобы он добавил вас в список мастеров."
         )
