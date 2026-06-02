@@ -18,6 +18,16 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 _raw_masters = os.getenv("MASTER_IDS", "")
 MASTER_IDS = [m.strip() for m in _raw_masters.split(",") if m.strip()]
 
+# ===== ВКонтакте (мини-приложение) =====
+# Защищённый ключ приложения VK Mini App — для проверки подписи параметров запуска.
+VK_SECRET = os.getenv("VK_SECRET")
+# VK ID мастеров (через запятую). Только они видят кабинет мастера.
+_raw_vk_masters = os.getenv("VK_MASTER_IDS", "")
+VK_MASTER_IDS = [m.strip() for m in _raw_vk_masters.split(",") if m.strip()]
+# VK ID администраторов (через запятую). Видят переключатель Клиент/Мастер.
+_raw_vk_admins = os.getenv("VK_ADMIN_IDS", "")
+VK_ADMIN_IDS = [m.strip() for m in _raw_vk_admins.split(",") if m.strip()]
+
 
 def validate() -> None:
     """Проверяем, что обязательные переменные заданы."""
