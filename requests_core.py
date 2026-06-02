@@ -107,7 +107,7 @@ async def notify_client(client_bot, req: dict, event: str) -> None:
             f"✅ <b>Мастер найден!</b>\n\n"
             f"По заявке №{rid} («{html.escape(req['problem'])}») назначен мастер. "
             f"Он свяжется с вами в ближайшее время.\n\n"
-            f"Спасибо, что выбрали «Техник Рядом»! 💖"
+            f"Спасибо, что выбрали «Мастер Рядом»! 💖"
         )
     elif event == "released":
         text = (
@@ -118,7 +118,7 @@ async def notify_client(client_bot, req: dict, event: str) -> None:
         text = (
             f"✅ <b>Заявка №{rid} выполнена!</b>\n\n"
             f"Работа по заявке («{html.escape(req['problem'])}») завершена.\n"
-            f"Спасибо, что выбрали «Техник Рядом»! 💖"
+            f"Спасибо, что выбрали «Мастер Рядом»! 💖"
         )
     else:
         return
