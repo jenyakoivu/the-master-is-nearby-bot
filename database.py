@@ -117,6 +117,15 @@ def init_db() -> None:
             )
             """
         )
+        # ВК: фото и отображаемое имя клиента (для показа мастеру)
+        try:
+            conn.execute("ALTER TABLE requests ADD COLUMN client_photo TEXT DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE requests ADD COLUMN client_name TEXT DEFAULT ''")
+        except Exception:
+            pass
         # Миграции для баз, созданных ранними версиями.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(requests)").fetchall()]
         for col, ddl in (
@@ -327,7 +336,7 @@ def get_master_active(master_id: int) -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, created_at, problem, district, address, urgency, phone,
-                   username, full_name, status, user_id, source
+                   username, full_name, status, user_id, source, client_photo, client_name
             FROM requests
             WHERE status = 'taken' AND taken_by_id = ?
             ORDER BY id DESC
@@ -344,7 +353,7 @@ def get_master_history(master_id: int, limit: int = 50) -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, created_at, problem, district, address, urgency, phone,
-                   username, full_name, status, user_id, source
+                   username, full_name, status, user_id, source, client_photo, client_name
             FROM requests
             WHERE taken_by_id = ? AND status IN ('done', 'canceled')
               AND id NOT IN (SELECT request_id FROM hidden_history WHERE master_id = ?)
@@ -495,3 +504,10 @@ def vk_get_master_pings(request_id: int) -> list[tuple[int, int]]:
 def vk_clear_master_pings(request_id: int) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM vk_master_pings WHERE request_id = ?", (request_id,))
+
+
+def set_client_info(request_id: int, photo: str, name: str) -> None:
+    """Сохраняет фото и имя клиента (из ВК) для заявки."""
+    with _connect() as conn:
+        conn.execute("UPDATE requests SET client_photo = ?, client_name = ? WHERE id = ?",
+                     (photo or "", name or "", request_id))
