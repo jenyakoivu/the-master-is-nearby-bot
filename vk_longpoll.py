@@ -80,14 +80,17 @@ async def run_longpoll():
         logger.info("ВК Long Poll не запущен: нет токена или ID сообщества")
         return
     group_id = str(config.VK_GROUP_ID).lstrip("-")
+    logger.info("ВК Long Poll запускается для сообщества %s", group_id)
     async with aiohttp.ClientSession() as session:
         while True:
             try:
                 # 1) получаем сервер Long Poll
                 srv = await _api(session, "groups.getLongPollServer", {"group_id": group_id})
                 if not srv:
+                    logger.warning("ВК Long Poll: не удалось получить сервер (проверьте права токена), повтор через 10с")
                     await asyncio.sleep(10)
                     continue
+                logger.info("ВК Long Poll: сервер получен, слушаю события")
                 server = srv["server"]
                 key = srv["key"]
                 ts = srv["ts"]
@@ -97,7 +100,7 @@ async def run_longpoll():
                         async with session.get(server, params={
                             "act": "a_check", "key": key, "ts": ts, "wait": 25,
                         }, timeout=aiohttp.ClientTimeout(total=40)) as resp:
-                            data = await resp.json()
+                            data = await resp.json(content_type=None)
                     except Exception as e:
                         logger.warning("VK LP poll error: %s", e)
                         break  # переполучим сервер
@@ -110,6 +113,7 @@ async def run_longpoll():
                             break  # 2/3 — переполучить сервер/ключ
                     ts = data.get("ts", ts)
                     for ev in data.get("updates", []):
+                        logger.info("ВК LP событие: %s", ev.get("type"))
                         if ev.get("type") == "message_event":
                             await _handle_message_event(session, ev.get("object", {}))
             except Exception as e:
