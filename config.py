@@ -32,6 +32,19 @@ VK_GROUP_TOKEN = os.getenv("VK_GROUP_TOKEN")
 # ID сообщества ВК.
 VK_GROUP_ID = os.getenv("VK_GROUP_ID")
 
+# Связка мастеров ТГ↔ВК: один человек с двумя ID.
+# Формат: MASTER_LINKS=ТГ_ID:ВК_ID,ТГ_ID2:ВК_ID2
+# Пример: MASTER_LINKS=747862074:1115336850
+_raw_links = os.getenv("MASTER_LINKS", "")
+MASTER_LINKS = []  # список пар (tg_id, vk_id) как строки
+for _pair in _raw_links.split(","):
+    _pair = _pair.strip()
+    if ":" in _pair:
+        _tg, _vk = _pair.split(":", 1)
+        _tg, _vk = _tg.strip(), _vk.strip()
+        if _tg and _vk:
+            MASTER_LINKS.append((_tg, _vk))
+
 
 def validate() -> None:
     """Проверяем, что обязательные переменные заданы."""
@@ -50,3 +63,38 @@ def validate() -> None:
             + ", ".join(missing)
             + ". Заполните файл .env (см. .env.example)."
         )
+
+
+def linked_ids(any_id) -> list[str]:
+    """Возвращает все ID (ТГ и ВК) одного мастера по любому из его ID.
+    Если связки нет — вернёт список из одного этого ID."""
+    sid = str(any_id)
+    result = {sid}
+    for tg, vk in MASTER_LINKS:
+        if sid == tg or sid == vk:
+            result.add(tg)
+            result.add(vk)
+    return list(result)
+
+
+def tg_id_for(any_id):
+    """ТГ ID мастера по любому его ID (или None)."""
+    sid = str(any_id)
+    for tg, vk in MASTER_LINKS:
+        if sid == tg or sid == vk:
+            return tg
+    # если сам является ТГ-мастером
+    if sid in [str(m) for m in MASTER_IDS]:
+        return sid
+    return None
+
+
+def vk_id_for(any_id):
+    """ВК ID мастера по любому его ID (или None)."""
+    sid = str(any_id)
+    for tg, vk in MASTER_LINKS:
+        if sid == tg or sid == vk:
+            return vk
+    if sid in [str(m) for m in VK_MASTER_IDS]:
+        return sid
+    return None
