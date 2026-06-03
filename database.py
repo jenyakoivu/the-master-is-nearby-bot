@@ -117,6 +117,17 @@ def init_db() -> None:
             )
             """
         )
+        # ВК: уведомления мастеру об отмене (для кнопки «Убрать»)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vk_cancel_notices (
+                request_id INTEGER NOT NULL,
+                vk_id      INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                PRIMARY KEY (request_id, vk_id)
+            )
+            """
+        )
         # ВК: фото и отображаемое имя клиента (для показа мастеру)
         try:
             conn.execute("ALTER TABLE requests ADD COLUMN client_photo TEXT DEFAULT ''")
@@ -511,3 +522,21 @@ def set_client_info(request_id: int, photo: str, name: str) -> None:
     with _connect() as conn:
         conn.execute("UPDATE requests SET client_photo = ?, client_name = ? WHERE id = ?",
                      (photo or "", name or "", request_id))
+
+
+def vk_save_cancel_notice(request_id: int, vk_id: int, message_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO vk_cancel_notices (request_id, vk_id, message_id) VALUES (?, ?, ?)",
+                     (request_id, vk_id, message_id))
+
+
+def vk_get_cancel_notice(request_id: int, vk_id: int):
+    with _connect() as conn:
+        row = conn.execute("SELECT message_id FROM vk_cancel_notices WHERE request_id = ? AND vk_id = ?",
+                           (request_id, vk_id)).fetchone()
+        return row["message_id"] if row else None
+
+
+def vk_delete_cancel_notice(request_id: int, vk_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM vk_cancel_notices WHERE request_id = ? AND vk_id = ?", (request_id, vk_id))
