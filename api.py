@@ -27,6 +27,66 @@ def set_bots(master_bot, client_bot) -> None:
     _client_bot = client_bot
 
 
+async def sync_new(request_id: int) -> None:
+    """Новая заявка из любого канала: пинги мастерам в ОБА канала (ТГ + ВК),
+    статус — клиенту в его канал."""
+    req = database.get_request(request_id)
+    if not req:
+        return
+    # Мастерам — пинги в оба канала (заявка общая)
+    if _master_bot is not None:
+        try:
+            await requests_core.broadcast_new_request(_master_bot, request_id)
+        except Exception:
+            logger.warning("ТГ-пинг не отправлен")
+    try:
+        vk_notify.send_master_pings(request_id)
+    except Exception:
+        logger.warning("ВК-пинг не отправлен")
+    # Клиенту — статус в его канал
+    await _sync_client(req)
+
+
+async def sync_update(req: dict) -> None:
+    """Изменение статуса из любого канала: обновить пинги мастеров в ОБОИХ каналах
+    и статус клиента в его канале."""
+    if not req:
+        return
+    # Мастерам: ТГ-пинги
+    if _master_bot is not None:
+        try:
+            await requests_core.broadcast_update(_master_bot, req)
+        except Exception:
+            logger.warning("ТГ-обновление не отправлено")
+    # Мастерам: ВК-пинги (снова свободна → пинг заново, иначе убрать)
+    try:
+        if req["status"] == "new":
+            vk_notify.remove_master_pings(req["id"])
+            vk_notify.send_master_pings(req["id"])
+        else:
+            vk_notify.remove_master_pings(req["id"])
+    except Exception:
+        logger.warning("ВК-обновление мастеров не отправлено")
+    # Клиенту — статус в его канал
+    await _sync_client(req)
+
+
+async def _sync_client(req: dict) -> None:
+    """Шлёт статус клиенту в ТОТ канал, откуда заявка (tg → телеграм, vk → ВК)."""
+    source = req.get("source") or "tg"
+    if source == "vk":
+        try:
+            vk_notify.refresh_client_status(req)
+        except Exception:
+            logger.warning("ВК-статус клиента не отправлен")
+    else:
+        if _client_bot is not None:
+            try:
+                await requests_core.refresh_client_status(_client_bot, req)
+            except Exception:
+                logger.warning("ТГ-статус клиента не отправлен")
+
+
 def _check_init_data(init_data: str) -> dict | None:
     """Проверяет подпись Telegram WebApp initData. Возвращает user dict или None."""
     try:
@@ -106,16 +166,9 @@ async def edit_request(request: web.Request) -> web.Response:
     if status is None:
         return _cors(web.json_response({"error": "not_editable"}, status=403))
 
-    # Если заявку уже взяли — обновим пинг-логику и карточки у мастеров
-    if status == "taken" and _master_bot is not None:
-        req = database.get_request(rid)
-        if req:
-            await requests_core.broadcast_update(_master_bot, req)
-
     req = database.get_request(rid)
-    # Обновляем сообщение-статус у клиента (данные могли измениться)
-    if _client_bot is not None and req:
-        await requests_core.refresh_client_status(_client_bot, req)
+    if req:
+        await sync_update(req)
     return _cors(web.json_response({"ok": True, "request": _req_to_dict(req)}))
 
 
@@ -140,13 +193,11 @@ async def delete_request(request: web.Request) -> web.Response:
     if not ok:
         return _cors(web.json_response({"error": "not_found"}, status=404))
     req = database.get_request(rid)
-    if _master_bot is not None and req:
-        await requests_core.broadcast_update(_master_bot, req)  # уберёт пинг, если был
-        if taker_id:
+    if req:
+        await sync_update(req)  # уберёт пинги в обоих каналах + статус клиенту
+        # личное уведомление взявшему мастеру (ТГ)
+        if taker_id and _master_bot is not None:
             await requests_core.notify_master_canceled(_master_bot, taker_id, req)
-    # Убираем сообщение-статус у клиента
-    if _client_bot is not None and req:
-        await requests_core.refresh_client_status(_client_bot, req)  # canceled -> удалит
     return _cors(web.json_response({"ok": True}))
 
 
@@ -204,18 +255,7 @@ async def create_request(request: web.Request) -> web.Response:
     data = {"problem": problem, "district": district, "address": address,
             "urgency": urgency, "phone": phone}
     request_id = database.save_request(data, _U())
-
-    # Рассылаем мастерам пинг + отправляем клиенту сообщение-статус
-    if _master_bot is not None:
-        try:
-            await requests_core.broadcast_new_request(_master_bot, request_id)
-        except Exception:
-            logger.warning("Не удалось разослать заявку мастерам")
-    if _client_bot is not None:
-        req = database.get_request(request_id)
-        if req:
-            await requests_core.refresh_client_status(_client_bot, req)
-
+    await sync_new(request_id)
     return _cors(web.json_response({"ok": True, "id": request_id}))
 
 
@@ -347,30 +387,16 @@ async def m_action(request: web.Request) -> web.Response:
 
     if action == "take":
         ok = database.take_request(rid, mid, mname)
-        if ok and _client_bot is not None:
-            req = database.get_request(rid)
-            if req:
-                await requests_core.refresh_client_status(_client_bot, req)
     elif action == "release":
         ok = database.release_request(rid, mid)
-        if ok and _client_bot is not None:
-            req = database.get_request(rid)
-            if req:
-                await requests_core.refresh_client_status(_client_bot, req)
     else:  # complete
         ok = database.complete_request(rid, mid)
-        if ok and _client_bot is not None:
-            req = database.get_request(rid)
-            if req:
-                await requests_core.refresh_client_status(_client_bot, req)
 
     if not ok:
         return _cors(web.json_response({"error": "not_allowed"}, status=403))
-    # Обновим карточку в чате мастеров (бот) тоже
-    if _master_bot is not None:
-        req = database.get_request(rid)
-        if req:
-            await requests_core.broadcast_update(_master_bot, req)
+    req = database.get_request(rid)
+    if req:
+        await sync_update(req)
     return _cors(web.json_response({"ok": True}))
 
 
@@ -472,19 +498,7 @@ async def vk_create(request: web.Request) -> web.Response:
     data = {"problem": problem, "district": district, "address": address,
             "urgency": urgency, "phone": phone}
     request_id = database.save_request(data, make_vk_user(vk_id), source="vk")
-    # Уведомления в Telegram-мастер-бот (общий пул) + ВК-мастерам
-    if _master_bot is not None:
-        try:
-            await requests_core.broadcast_new_request(_master_bot, request_id)
-        except Exception:
-            pass
-    try:
-        vk_notify.send_master_pings(request_id)
-        req = database.get_request(request_id)
-        if req:
-            vk_notify.refresh_client_status(req)
-    except Exception:
-        logger.warning("VK-уведомления при создании не отправлены")
+    await sync_new(request_id)
     return _cors(web.json_response({"ok": True, "id": request_id}))
 
 
@@ -509,10 +523,8 @@ async def vk_edit(request: web.Request) -> web.Response:
     if status is None:
         return _cors(web.json_response({"error": "not_editable"}, status=403))
     req = database.get_request(rid)
-    if status == "taken" and _master_bot is not None and req:
-        await requests_core.broadcast_update(_master_bot, req)
-    if _client_bot is not None and req:
-        await requests_core.refresh_client_status(_client_bot, req)
+    if req:
+        await sync_update(req)
     return _cors(web.json_response({"ok": True, "request": _req_to_dict(req)}))
 
 
@@ -533,19 +545,10 @@ async def vk_delete(request: web.Request) -> web.Response:
     if not ok:
         return _cors(web.json_response({"error": "not_found"}, status=404))
     req = database.get_request(rid)
-    if _master_bot is not None and req:
-        await requests_core.broadcast_update(_master_bot, req)
-        if taker_id:
+    if req:
+        await sync_update(req)  # уберёт пинги в обоих каналах + статус клиенту
+        if taker_id and _master_bot is not None:
             await requests_core.notify_master_canceled(_master_bot, taker_id, req)
-    if _client_bot is not None and req:
-        await requests_core.refresh_client_status(_client_bot, req)
-    # ВК: убрать пинги мастеров и сообщение-статус клиента
-    try:
-        if req:
-            vk_notify.remove_master_pings(rid)
-            vk_notify.refresh_client_status(req)  # canceled -> удалит
-    except Exception:
-        logger.warning("VK-уведомления при отмене не отправлены")
     return _cors(web.json_response({"ok": True}))
 
 
@@ -591,31 +594,15 @@ async def vk_m_action(request: web.Request) -> web.Response:
     mname = f"VK id{vk_id}"
     if action == "take":
         ok = database.take_request(rid, mid, mname)
-        event = "taken"
     elif action == "release":
         ok = database.release_request(rid, mid)
-        event = "released"
     else:
         ok = database.complete_request(rid, mid)
-        event = "done"
     if not ok:
         return _cors(web.json_response({"error": "not_allowed"}, status=403))
     req = database.get_request(rid)
-    if _client_bot is not None and req:
-        await requests_core.refresh_client_status(_client_bot, req)
-    if _master_bot is not None and req:
-        await requests_core.broadcast_update(_master_bot, req)
-    # ВК-уведомления
-    try:
-        if req:
-            vk_notify.refresh_client_status(req)
-            if req["status"] == "new":
-                vk_notify.remove_master_pings(rid)
-                vk_notify.send_master_pings(rid)
-            else:
-                vk_notify.remove_master_pings(rid)
-    except Exception:
-        logger.warning("VK-уведомления при действии мастера не отправлены")
+    if req:
+        await sync_update(req)
     return _cors(web.json_response({"ok": True}))
 
 
