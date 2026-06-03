@@ -224,7 +224,7 @@ async def m_clear_history(request: web.Request) -> web.Response:
     user = _master_auth(body.get("initData", ""))
     if not user:
         return _cors(web.json_response({"error": "unauthorized"}, status=401))
-    n = database.clear_master_history(user["id"])
+    n = database.clear_master_history(config.linked_ids(user["id"]))
     # Удаляем из чата связанные уведомления «клиент отменил»
     if _master_bot is not None:
         for rid, message_id in database.get_cancel_notices_for_master(user["id"]):
@@ -377,8 +377,9 @@ async def m_mine(request: web.Request) -> web.Response:
     user = _master_auth(request.query.get("initData", ""))
     if not user:
         return _cors(web.json_response({"error": "unauthorized"}, status=401))
-    active = database.get_master_active(user["id"])
-    history = database.get_master_history(user["id"])
+    ids = config.linked_ids(user["id"])
+    active = database.get_master_active(ids)
+    history = database.get_master_history(ids)
     return _cors(web.json_response({
         "active": [_master_card_dict(r, True) for r in active],
         "history": [_master_card_dict(r, True) for r in history],
@@ -591,8 +592,9 @@ async def vk_m_mine(request: web.Request) -> web.Response:
     vk_id = _vk_user_id(request.query.get("sign_params", ""))
     if not vk_id or not _vk_is_master(vk_id):
         return _cors(web.json_response({"error": "unauthorized"}, status=401))
-    active = database.get_master_active(int(vk_id))
-    history = database.get_master_history(int(vk_id))
+    ids = config.linked_ids(vk_id)
+    active = database.get_master_active(ids)
+    history = database.get_master_history(ids)
     return _cors(web.json_response({
         "active": [_master_card_dict(r, True) for r in active],
         "history": [_master_card_dict(r, True) for r in history],
@@ -635,7 +637,7 @@ async def vk_m_clear_history(request: web.Request) -> web.Response:
     vk_id = _vk_user_id(body.get("sign_params", ""))
     if not vk_id or not _vk_is_master(vk_id):
         return _cors(web.json_response({"error": "unauthorized"}, status=401))
-    n = database.clear_master_history(int(vk_id))
+    n = database.clear_master_history(config.linked_ids(vk_id))
     return _cors(web.json_response({"ok": True, "cleared": n}))
 
 
