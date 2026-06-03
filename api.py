@@ -11,6 +11,7 @@ from aiohttp import web
 
 import config
 import database
+import keyboards
 import requests_core
 import vk_notify
 
@@ -253,8 +254,8 @@ async def create_request(request: web.Request) -> web.Response:
     phone_raw = str(body.get("phone", "")).strip()
 
     # Валидация. Телефон — строго РФ (нормализуем к +7XXXXXXXXXX).
-    DISTRICTS = ["Индустриальный", "Северный", "Заягорбский", "Зашекснинский", "Пригород"]
-    URGENCIES = ["Срочно", "Сегодня", "В ближайшие дни"]
+    DISTRICTS = keyboards.DISTRICTS
+    URGENCIES = keyboards.URGENCIES
     phone = requests_core.normalize_ru_phone(phone_raw)
     if (len(problem) < 3 or district not in DISTRICTS or len(address) < 3
             or urgency not in URGENCIES or phone is None):
@@ -354,7 +355,7 @@ def _master_card_dict(r: dict, show_contact: bool) -> dict:
         d["source"] = source
         if source == "vk":
             d["client_link"] = f"https://vk.com/id{r.get('user_id')}"
-            d["client_label"] = f"Профиль ВК"
+            d["client_label"] = "Профиль ВК"
         elif r.get("username"):
             d["client_link"] = f"https://t.me/{r.get('username')}"
             d["client_label"] = "@" + r.get("username")
@@ -508,8 +509,8 @@ async def vk_create(request: web.Request) -> web.Response:
     address = str(body.get("address", "")).strip()
     urgency = str(body.get("urgency", "")).strip()
     phone = requests_core.normalize_ru_phone(str(body.get("phone", "")).strip())
-    DISTRICTS = ["Индустриальный", "Северный", "Заягорбский", "Зашекснинский", "Пригород"]
-    URGENCIES = ["Срочно", "Сегодня", "В ближайшие дни"]
+    DISTRICTS = keyboards.DISTRICTS
+    URGENCIES = keyboards.URGENCIES
     if (len(problem) < 3 or district not in DISTRICTS or len(address) < 3
             or urgency not in URGENCIES or phone is None):
         return _cors(web.json_response({"error": "invalid"}, status=400))
