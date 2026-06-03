@@ -333,7 +333,10 @@ def _master_card_dict(r: dict, show_contact: bool) -> dict:
         d["phone_dial"] = requests_core.phone_for_dial(ph)  # для tel:
         d["username"] = r.get("username") or ""
         d["full_name"] = r.get("full_name") or ""
+        d["client_photo"] = r.get("client_photo") or ""
+        # Имя: для ВК — из client_name, для ТГ — full_name/username
         source = r.get("source") or "tg"
+        d["client_name"] = r.get("client_name") or r.get("full_name") or ""
         d["source"] = source
         if source == "vk":
             d["client_link"] = f"https://vk.com/id{r.get('user_id')}"
@@ -498,6 +501,11 @@ async def vk_create(request: web.Request) -> web.Response:
     data = {"problem": problem, "district": district, "address": address,
             "urgency": urgency, "phone": phone}
     request_id = database.save_request(data, make_vk_user(vk_id), source="vk")
+    # Фото и имя клиента из ВК (если мини-апп передал)
+    photo = str(body.get("photo", "")).strip()
+    name = str(body.get("name", "")).strip()
+    if photo or name:
+        database.set_client_info(request_id, photo, name)
     await sync_new(request_id)
     return _cors(web.json_response({"ok": True, "id": request_id}))
 
