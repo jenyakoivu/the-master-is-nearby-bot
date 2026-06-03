@@ -254,7 +254,7 @@ async def create_request(request: web.Request) -> web.Response:
 
     # Валидация. Телефон — строго РФ (нормализуем к +7XXXXXXXXXX).
     DISTRICTS = ["Индустриальный", "Северный", "Заягорбский", "Зашекснинский", "Пригород"]
-    URGENCIES = ["Срочно — авария", "Сегодня", "В ближайшие дни"]
+    URGENCIES = ["Срочно", "Сегодня", "В ближайшие дни"]
     phone = requests_core.normalize_ru_phone(phone_raw)
     if (len(problem) < 3 or district not in DISTRICTS or len(address) < 3
             or urgency not in URGENCIES or phone is None):
@@ -508,7 +508,7 @@ async def vk_create(request: web.Request) -> web.Response:
     urgency = str(body.get("urgency", "")).strip()
     phone = requests_core.normalize_ru_phone(str(body.get("phone", "")).strip())
     DISTRICTS = ["Индустриальный", "Северный", "Заягорбский", "Зашекснинский", "Пригород"]
-    URGENCIES = ["Срочно — авария", "Сегодня", "В ближайшие дни"]
+    URGENCIES = ["Срочно", "Сегодня", "В ближайшие дни"]
     if (len(problem) < 3 or district not in DISTRICTS or len(address) < 3
             or urgency not in URGENCIES or phone is None):
         return _cors(web.json_response({"error": "invalid"}, status=400))
