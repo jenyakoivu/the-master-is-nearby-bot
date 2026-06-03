@@ -145,7 +145,7 @@ def _client_status_text(req: dict) -> str:
     status = req["status"]
     extra = ""
     if status == "new":
-        line = "🔄🔍 Снова ищем мастера" if req.get("released_once") else "🔍 Ищем мастера"
+        line = "🔍 Ищем другого мастера" if req.get("released_once") else "🔍 Ищем мастера"
     elif status == "taken":
         line = "✅ Нашли для вас мастера"
         extra = "\n\nМастер скоро свяжется с вами ✨"
