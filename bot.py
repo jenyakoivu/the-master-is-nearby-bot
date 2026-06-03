@@ -52,6 +52,10 @@ async def run() -> None:
     set_bots(master_app.bot, client_app.bot)
     api_runner = await start_api()
 
+    # Фоновый слушатель событий ВК (нажатия кнопок в уведомлениях)
+    import vk_longpoll
+    vk_lp_task = asyncio.create_task(vk_longpoll.run_longpoll())
+
     logger.info("Оба бота запущены: клиентский и мастерский")
 
     # Держим процесс живым, пока не остановят.
@@ -59,6 +63,7 @@ async def run() -> None:
     try:
         await stop_event.wait()
     finally:
+        vk_lp_task.cancel()
         await api_runner.cleanup()
         await client_app.updater.stop()
         await master_app.updater.stop()
