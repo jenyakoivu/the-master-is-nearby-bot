@@ -158,7 +158,7 @@ def _client_status_text(req: dict) -> str:
     extra = ""
     if status == "new":
         if req.get("released_once"):
-            status_line = "🔄🔍 Снова ищем мастера"
+            status_line = "🔍 Ищем другого мастера"
         else:
             status_line = "🔍 Ищем мастера"
     elif status == "taken":
