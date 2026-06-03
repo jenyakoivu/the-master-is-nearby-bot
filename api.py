@@ -71,6 +71,22 @@ async def sync_update(req: dict) -> None:
     await _sync_client(req)
 
 
+async def _notify_canceled_master(taker_id, req) -> None:
+    """Уведомляет взявшего мастера об отмене — в его канал (ВК или ТГ)."""
+    if taker_id is None:
+        return
+    if str(taker_id) in [str(m) for m in config.VK_MASTER_IDS]:
+        try:
+            vk_notify.notify_master_canceled(int(taker_id), req)
+        except Exception:
+            logger.warning("ВК-уведомление об отмене не отправлено")
+    elif _master_bot is not None:
+        try:
+            await requests_core.notify_master_canceled(_master_bot, taker_id, req)
+        except Exception:
+            logger.warning("ТГ-уведомление об отмене не отправлено")
+
+
 async def _sync_client(req: dict) -> None:
     """Шлёт статус клиенту в ТОТ канал, откуда заявка (tg → телеграм, vk → ВК)."""
     source = req.get("source") or "tg"
@@ -195,9 +211,7 @@ async def delete_request(request: web.Request) -> web.Response:
     req = database.get_request(rid)
     if req:
         await sync_update(req)  # уберёт пинги в обоих каналах + статус клиенту
-        # личное уведомление взявшему мастеру (ТГ)
-        if taker_id and _master_bot is not None:
-            await requests_core.notify_master_canceled(_master_bot, taker_id, req)
+        await _notify_canceled_master(taker_id, req)  # в канал взявшего мастера
     return _cors(web.json_response({"ok": True}))
 
 
@@ -555,8 +569,7 @@ async def vk_delete(request: web.Request) -> web.Response:
     req = database.get_request(rid)
     if req:
         await sync_update(req)  # уберёт пинги в обоих каналах + статус клиенту
-        if taker_id and _master_bot is not None:
-            await requests_core.notify_master_canceled(_master_bot, taker_id, req)
+        await _notify_canceled_master(taker_id, req)  # в канал взявшего мастера
     return _cors(web.json_response({"ok": True}))
 
 
