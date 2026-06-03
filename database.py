@@ -341,60 +341,72 @@ def get_open_requests(limit: int = 50) -> list[dict]:
         return [dict(r) for r in rows]
 
 
-def get_master_active(master_id: int) -> list[dict]:
-    """Заявки мастера в работе (taken им)."""
+def get_master_active(master_id) -> list[dict]:
+    """Заявки мастера в работе (taken им). master_id может быть числом или списком
+    связанных ID (ТГ+ВК одного мастера)."""
+    ids = master_id if isinstance(master_id, (list, tuple)) else [master_id]
+    ids = [str(i) for i in ids]
+    placeholders = ",".join("?" for _ in ids)
     with _connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, created_at, problem, district, address, urgency, phone,
                    username, full_name, status, user_id, source, client_photo, client_name
             FROM requests
-            WHERE status = 'taken' AND taken_by_id = ?
+            WHERE status = 'taken' AND CAST(taken_by_id AS TEXT) IN ({placeholders})
             ORDER BY id DESC
             """,
-            (master_id,),
+            ids,
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def get_master_history(master_id: int, limit: int = 50) -> list[dict]:
-    """История мастера: выполненные им (done) и отменённые клиентом заявки,
-    которые были взяты ИМ. Переданные сюда не попадают (taken_by_id обнуляется при передаче)."""
+def get_master_history(master_id, limit: int = 50) -> list[dict]:
+    """История мастера: выполненные им (done) и отменённые заявки, взятые ИМ.
+    master_id может быть числом или списком связанных ID (ТГ+ВК одного мастера)."""
+    ids = master_id if isinstance(master_id, (list, tuple)) else [master_id]
+    ids = [str(i) for i in ids]
+    placeholders = ",".join("?" for _ in ids)
     with _connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, created_at, problem, district, address, urgency, phone,
                    username, full_name, status, user_id, source, client_photo, client_name
             FROM requests
-            WHERE taken_by_id = ? AND status IN ('done', 'canceled')
-              AND id NOT IN (SELECT request_id FROM hidden_history WHERE master_id = ?)
+            WHERE CAST(taken_by_id AS TEXT) IN ({placeholders}) AND status IN ('done', 'canceled')
+              AND id NOT IN (SELECT request_id FROM hidden_history WHERE CAST(master_id AS TEXT) IN ({placeholders}))
             ORDER BY id DESC
             LIMIT ?
             """,
-            (master_id, master_id, limit),
+            ids + ids + [limit],
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def clear_master_history(master_id: int) -> int:
+def clear_master_history(master_id) -> int:
     """Прячет из истории мастера все его завершённые/отменённые заявки.
-    Данные из базы НЕ удаляются — только перестают показываться этому мастеру.
-    Возвращает число скрытых заявок."""
+    master_id может быть числом или списком связанных ID.
+    Данные из базы НЕ удаляются — только перестают показываться. Возвращает число скрытых."""
+    ids = master_id if isinstance(master_id, (list, tuple)) else [master_id]
+    ids = [str(i) for i in ids]
+    placeholders = ",".join("?" for _ in ids)
+    primary = ids[0]
     with _connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id FROM requests
-            WHERE taken_by_id = ? AND status IN ('done', 'canceled')
+            WHERE CAST(taken_by_id AS TEXT) IN ({placeholders}) AND status IN ('done', 'canceled')
             """,
-            (master_id,),
+            ids,
         ).fetchall()
-        ids = [r["id"] for r in rows]
-        for rid in ids:
-            conn.execute(
-                "INSERT OR IGNORE INTO hidden_history (master_id, request_id) VALUES (?, ?)",
-                (master_id, rid),
-            )
-        return len(ids)
+        rid_list = [r["id"] for r in rows]
+        for rid in rid_list:
+            for mid in ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO hidden_history (master_id, request_id) VALUES (?, ?)",
+                    (mid, rid),
+                )
+        return len(rid_list)
 
 
 def clear_master_messages(request_id: int) -> None:
