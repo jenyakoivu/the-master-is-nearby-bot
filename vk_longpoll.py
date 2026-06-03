@@ -26,7 +26,7 @@ async def _api(session: aiohttp.ClientSession, method: str, params: dict) -> dic
     params["v"] = VK_V
     try:
         async with session.post(VK_API + method, data=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            body = await resp.json()
+            body = await resp.json(content_type=None)  # ВК иногда отдаёт text/plain
         if "error" in body:
             logger.warning("VK LP %s error: %s", method, body["error"].get("error_msg"))
             return None
@@ -38,15 +38,15 @@ async def _api(session: aiohttp.ClientSession, method: str, params: dict) -> dic
 
 async def _answer_event(session, event_id, user_id, peer_id, snackbar_text=None):
     """Отвечает на нажатие callback-кнопки (обязательно, иначе у пользователя крутится загрузка)."""
-    event_data = {}
-    if snackbar_text:
-        event_data = {"type": "show_snackbar", "text": snackbar_text}
-    await _api(session, "messages.sendMessageEventAnswer", {
+    params = {
         "event_id": event_id,
         "user_id": user_id,
         "peer_id": peer_id,
-        "event_data": json.dumps(event_data) if event_data else "",
-    })
+    }
+    if snackbar_text:
+        params["event_data"] = json.dumps({"type": "show_snackbar", "text": snackbar_text})
+    resp = await _api(session, "messages.sendMessageEventAnswer", params)
+    logger.info("sendMessageEventAnswer resp: %s", resp)
 
 
 async def _handle_message_event(session, obj):
@@ -62,16 +62,16 @@ async def _handle_message_event(session, obj):
     event_id = obj.get("event_id")
     action = payload.get("action")
 
+    # Сначала ВСЕГДА отвечаем ВК — чтобы у пользователя сразу убралась загрузка
+    await _answer_event(session, event_id, user_id, peer_id, "Убрано" if action == "del_cancel_notice" else None)
+
+    # Потом выполняем действие
     if action == "del_cancel_notice":
         rid = payload.get("rid")
-        # удаляем сообщение-уведомление
         msg_id = database.vk_get_cancel_notice(rid, user_id) if rid else None
         if msg_id:
             vk_notify.delete(user_id, msg_id)
             database.vk_delete_cancel_notice(rid, user_id)
-        await _answer_event(session, event_id, user_id, peer_id, "Убрано")
-    else:
-        await _answer_event(session, event_id, user_id, peer_id)
 
 
 async def run_longpoll():
