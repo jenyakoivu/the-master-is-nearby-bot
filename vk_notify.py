@@ -51,6 +51,42 @@ def send(vk_id: int, text: str) -> int | None:
     return None
 
 
+def send_with_button(vk_id: int, text: str, label: str, payload: dict) -> int | None:
+    """Шлёт сообщение с одной inline callback-кнопкой. Возвращает message_id."""
+    keyboard = {
+        "inline": True,
+        "buttons": [[{
+            "action": {"type": "callback", "label": label, "payload": json.dumps(payload)},
+            "color": "secondary",
+        }]],
+    }
+    resp = _call("messages.send", {
+        "peer_id": vk_id,
+        "message": text,
+        "random_id": random.randint(1, 2_000_000_000),
+        "keyboard": json.dumps(keyboard),
+    })
+    if isinstance(resp, int):
+        return resp
+    return None
+
+
+def notify_master_canceled(master_vk_id: int, req: dict) -> None:
+    """Уведомляет ВК-мастера, что клиент отменил взятую им заявку.
+    Сообщение с кнопкой «Убрать» (по нажатию удаляется через Long Poll-слушатель)."""
+    if not database.vk_is_allowed(master_vk_id):
+        return
+    text = (
+        f"❌ Клиент отменил заявку №{req['id']}\n"
+        f"«{req['problem']}» — заявка больше не актуальна."
+    )
+    msg_id = send_with_button(master_vk_id, text, "🗑 Убрать",
+                              {"action": "del_cancel_notice", "rid": req["id"]})
+    # сохраним id этого уведомления, чтобы кнопка могла его удалить
+    if msg_id:
+        database.vk_save_cancel_notice(req["id"], master_vk_id, msg_id)
+
+
 def edit(vk_id: int, message_id: int, text: str) -> bool:
     resp = _call("messages.edit", {
         "peer_id": vk_id,
