@@ -8,7 +8,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppI
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 import database
-import requests_core
 from keyboards import MINIAPP_URL
 
 logger = logging.getLogger(__name__)
