@@ -390,7 +390,6 @@ def clear_master_history(master_id) -> int:
     ids = master_id if isinstance(master_id, (list, tuple)) else [master_id]
     ids = [str(i) for i in ids]
     placeholders = ",".join("?" for _ in ids)
-    primary = ids[0]
     with _connect() as conn:
         rows = conn.execute(
             f"""
