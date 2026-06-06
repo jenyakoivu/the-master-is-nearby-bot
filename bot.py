@@ -9,10 +9,10 @@ import logging
 
 from telegram.ext import Application
 
-import client_bot
+import the_master_is_nearby_bot as client_bot
 import config
 import database
-import master_bot
+import order_nearby_bot as master_bot
 from api import start_api
 
 logging.basicConfig(
