@@ -2,7 +2,7 @@
 поэтому диалоговые клавиатуры чата больше не нужны."""
 
 # Адрес клиентского мини-аппа («Мои заявки» / создание заявки)
-MINIAPP_URL = "https://jenyakoivu.github.io/the-master-is-nearby-app/"
+MINIAPP_URL = "https://jenyakoivu.github.io/the-master-is-nearby-app/customer_form.html"
 
 # Районы Череповца (используются и в боте, и в валидации api.py)
 DISTRICTS = [
